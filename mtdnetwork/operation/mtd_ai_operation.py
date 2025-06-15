@@ -158,8 +158,17 @@ class MTDAIOperation:
         # execute mtd
         mtd.mtd_operation(self.attack_operation.get_adversary())
 
+        
+
         finish_time = env.now + self._proceed_time
         duration = finish_time - start_time
+
+        #M1T1
+        #applies the duration taken to execute the MTDaction as downtime to all hosts, could add scaling factor depending on action later?
+        for host in self.network.get_hosts():
+            host.add_downtime(duration)
+        
+        
         
         if self.logging:
             logging.info('MTD: %s finished in %.1fs at %.1fs.' % (mtd.get_name(), duration, finish_time))
