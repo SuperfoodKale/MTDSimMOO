@@ -120,7 +120,7 @@ class Evaluation:
 
             total_asr, total_time_to_compromise, total_compromises = 0, 0, 0
 
-
+            #M1T1
             result.append({'time_to_compromise': time_to_compromise,
                            'attack_success_rate': attack_success_rate,
                            'host_compromise_ratio': comp_ratio,
@@ -129,7 +129,8 @@ class Evaluation:
                            "attack_path_exposure": state_array[2],
                            "roa": state_array[4],
                            "shortest_path_variability": state_array[5],
-                           "risk": state_array[6],})
+                           "risk": state_array[6],
+                           "total_downtime": self.total_downtime()})
 
     
         return result
@@ -351,3 +352,8 @@ class Evaluation:
         plt.legend()
         plt.savefig(directory + '/experimental_data/plots/risk.png')
         plt.show()
+
+    #M1T1
+    def total_downtime(self):
+        return sum(host.get_downtime() for host in self_network.get_hosts())
+        

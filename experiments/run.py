@@ -139,7 +139,7 @@ def construct_average_result(results):
             })
     return results_avg
 
-
+#M1T1
 def construct_experiment_result(name, mtd_interval, item, network_size):
 
     return {
@@ -155,6 +155,7 @@ def construct_experiment_result(name, mtd_interval, item, network_size):
         'ROA': item['roa'],
         'risk': item['risk'],
         'shortest_path_variability': item['shortest_path_variability'],
+        'downtime': item['downtime'],
         # 'Compromised Num': evaluation.compromised_num()
     }
 

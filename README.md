@@ -11,7 +11,7 @@ A time-based simulator used for evaluating Moving Target Defence (MTD) technique
 3. Activating the environment
    - `conda activate mtdsimtime`
 4. Updating the environment
-   - `conda env update --name mtdsimtime --file environment.yml --prune`
+   - `conda env update --name mtdsimmoo --file environment.yml --prune`
 
 ## Features
 
