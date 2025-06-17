@@ -60,10 +60,8 @@ class Host:
         )
         self.setup_network(service_generator)
         self.set_host_users(users_list)
-
-	#M1T1 
-	#variable to track the downtime experienced by each host
-	self.downtime = 0 
+        #M1T1: variable to track the downtime experienced by each host
+        self.downtime = 0 
 
     def is_exposed_endpoint(self):
         return self.host_id in self.network.exposed_endpoints
@@ -685,9 +683,9 @@ class Host:
         """
         adds downtime to the host
         """
-    	self.downtime += duration
+        self.downtime += duration
 
-    def get_downtime(self, duration):
+    def get_downtime(self):
         """
         gets the current downtime of the host
         returns:

@@ -355,5 +355,5 @@ class Evaluation:
 
     #M1T1
     def total_downtime(self):
-        return sum(host.get_downtime() for host in self_network.get_hosts())
+        return sum(host.get_downtime() for host in self._network.get_host_objects())
         

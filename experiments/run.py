@@ -52,6 +52,7 @@ mtd_strategies = [
 # features = {"static": static_features, "time": time_features}
 
 def save_evaluation_result(file_name, evaluations):
+    print("in evaluation saver")
     current_directory = os.getcwd()
     print(f"Saving evaluation results to {current_directory + '/experimental_data/results/' + file_name + '.csv'}")
     if not os.path.exists(current_directory + '/experimental_data/results/' + file_name + '.csv'):
@@ -155,7 +156,7 @@ def construct_experiment_result(name, mtd_interval, item, network_size):
         'ROA': item['roa'],
         'risk': item['risk'],
         'shortest_path_variability': item['shortest_path_variability'],
-        'downtime': item['downtime'],
+        'total_downtime': item['total_downtime'],
         # 'Compromised Num': evaluation.compromised_num()
     }
 
@@ -195,9 +196,10 @@ def mtd_ai_simulation(file_name,  model_path, start_time, finish_time, total_nod
     """
     Simulations for single ai mtd
     """
+    print("mtd_ai_sim")
     evaluations = []
     scheme = 'mtd_ai'
-    # print(mtd_name, scheme)
+    #print(mtd_name, scheme)
     for mtd_interval in mtd_interval:
         for network_size in network_size:
              evaluation = execute_ai_model(
@@ -218,9 +220,10 @@ def mtd_ai_simulation(file_name,  model_path, start_time, finish_time, total_nod
                 result = construct_experiment_result('mtd_ai', mtd_interval, item, network_size)
         
                 evaluations.append(result)
-            
 
+    print("before save")
     save_evaluation_result(file_name, evaluations)
+    print("after save")
     # print(scheme)
     return evaluations
 

@@ -165,8 +165,8 @@ class MTDAIOperation:
 
         #M1T1
         #applies the duration taken to execute the MTDaction as downtime to all hosts, could add scaling factor depending on action later?
-        for host in self.network.get_hosts():
-            host.add_downtime(duration)
+        for host in self.network.get_host_objects():
+            host.add_downtime(duration=duration)
         
         
         

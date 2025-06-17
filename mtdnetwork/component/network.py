@@ -541,6 +541,9 @@ class Network:
     def get_hosts(self):
         return dict(nx.get_node_attributes(self.graph, "host"))
 
+    def get_host_objects(self):
+        return list(nx.get_node_attributes(self.graph, "host").values())
+    
     def get_subnets(self):
         return dict(nx.get_node_attributes(self.graph, "subnet"))
 
