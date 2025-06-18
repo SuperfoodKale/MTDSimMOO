@@ -167,6 +167,9 @@ class MTDAIOperation:
         #applies the duration taken to execute the MTDaction as downtime to all hosts, could add scaling factor depending on action later?
         for host in self.network.get_host_objects():
             host.add_downtime(duration=duration)
+
+        for host in self.network.get_host_objects():
+            host.add_latency(latency=get_latency(mtd.get_name()))
         
         
         
@@ -294,5 +297,15 @@ class MTDAIOperation:
         # self.security_metrics_record.append_security_metric_record(state_array,time_series_array, env.now)
  
         return state_array, time_series_array
-    
+
+
+
+    def get_latency(mtd):
+        LATENCY_VALUES = {
+            "CompleteTopologyShuffle": 15000,  
+            "IPShuffle": 50,
+            "OSDiversity": 10000,
+            "ServiceDiversity": 5000,
+        }
+        return LATENCY_VALUES.get(mtd,None)
   
