@@ -156,7 +156,7 @@ def construct_experiment_result(name, mtd_interval, item, network_size):
         'ROA': item['roa'],
         'risk': item['risk'],
         'shortest_path_variability': item['shortest_path_variability'],
-        'total_downtime': item['total_downtime']
+        'total_downtime': item['total_downtime'],
         'total_latency': item['total_latency'],
         # 'Compromised Num': evaluation.compromised_num()
     }
@@ -197,10 +197,8 @@ def mtd_ai_simulation(file_name,  model_path, start_time, finish_time, total_nod
     """
     Simulations for single ai mtd
     """
-    print("mtd_ai_sim")
     evaluations = []
     scheme = 'mtd_ai'
-    #print(mtd_name, scheme)
     for mtd_interval in mtd_interval:
         for network_size in network_size:
              evaluation = execute_ai_model(
@@ -222,10 +220,7 @@ def mtd_ai_simulation(file_name,  model_path, start_time, finish_time, total_nod
         
                 evaluations.append(result)
 
-    print("before save")
     save_evaluation_result(file_name, evaluations)
-    print("after save")
-    # print(scheme)
     return evaluations
 
 

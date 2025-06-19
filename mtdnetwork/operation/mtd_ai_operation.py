@@ -164,12 +164,15 @@ class MTDAIOperation:
         duration = finish_time - start_time
 
         #M1T1
-        #applies the duration taken to execute the MTDaction as downtime to all hosts, could add scaling factor depending on action later?
+        #applies the duration taken to execute the MTDaction as downtime to all hosts
         for host in self.network.get_host_objects():
             host.add_downtime(duration=duration)
 
+        MTDName =  str(mtd.get_name())
+        with open("output.txt", "w") as file:
+            file.write(f"Contents: {MTDName}, Type: {type(MTDName)}")
         for host in self.network.get_host_objects():
-            host.add_latency(latency=get_latency(mtd.get_name()))
+            host.add_latency(ms=self.get_latency(MTDName))
         
         
         
@@ -300,7 +303,7 @@ class MTDAIOperation:
 
 
 
-    def get_latency(mtd):
+    def get_latency(self, mtd):
         LATENCY_VALUES = {
             "CompleteTopologyShuffle": 15000,  
             "IPShuffle": 50,

@@ -130,7 +130,7 @@ class Evaluation:
                            "roa": state_array[4],
                            "shortest_path_variability": state_array[5],
                            "risk": state_array[6],
-                           "total_downtime": self.total_downtime()
+                           "total_downtime": self.total_downtime(),
                            "total_latency": self.total_latency()})
 
     
