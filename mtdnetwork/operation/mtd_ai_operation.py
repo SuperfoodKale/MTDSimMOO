@@ -305,9 +305,9 @@ class MTDAIOperation:
 
     def get_latency(self, mtd):
         LATENCY_VALUES = {
-            "CompleteTopologyShuffle": 15000,  
-            "IPShuffle": 50,
-            "OSDiversity": 10000,
+            "CompleteTopologyShuffle": 5350,  
+            "IPShuffle": 200,
+            "OSDiversity": 150,
             "ServiceDiversity": 5000,
         }
         return LATENCY_VALUES.get(mtd,None)
