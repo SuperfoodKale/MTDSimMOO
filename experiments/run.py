@@ -158,6 +158,8 @@ def construct_experiment_result(name, mtd_interval, item, network_size):
         'shortest_path_variability': item['shortest_path_variability'],
         'total_downtime': item['total_downtime'],
         'total_latency': item['total_latency'],
+        'total_agent_time': item['total_agent_time'],
+        'total_mtd_actions': item['total_mtd_actions'],
         # 'Compromised Num': evaluation.compromised_num()
     }
 

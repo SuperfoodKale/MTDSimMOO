@@ -63,6 +63,7 @@ class Host:
         #M1T1: variable to track the downtime experienced by each host
         self.downtime = 0 
         self.latency = 0
+        self.agent_time = 0
 
     def is_exposed_endpoint(self):
         return self.host_id in self.network.exposed_endpoints
@@ -699,5 +700,10 @@ class Host:
 
     def get_latency(self):
         return self.latency 
-        
+
+    def add_agent_time(self, ms):
+        self.agent_time += ms
+
+    def get_agent_time(self):
+        return self.agent_time
         

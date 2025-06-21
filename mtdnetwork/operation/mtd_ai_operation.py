@@ -87,7 +87,13 @@ class MTDAIOperation:
                 if (self.env.now - self.network.get_last_mtd_triggered_time()) > 2000: # The number 100 is just a temperory threshold
                     action = 1
                 else:
+                    import time 
+                    start_time = time.perf_counter()
                     action = choose_action(state, time_series, self.main_network, 5, self.epsilon)
+                    finish_time = time.perf_counter()
+                    agent_time = finish_time - start_time
+                    for host in self.network.get_host_objects():
+                        host.add_agent_time(ms = agent_time)
                 
                 if self.logging:
                     logging.info('Static period: %s' % (self.env.now - self.network.get_last_mtd_triggered_time()))
@@ -169,8 +175,6 @@ class MTDAIOperation:
             host.add_downtime(duration=duration)
 
         MTDName =  str(mtd.get_name())
-        with open("output.txt", "w") as file:
-            file.write(f"Contents: {MTDName}, Type: {type(MTDName)}")
         for host in self.network.get_host_objects():
             host.add_latency(ms=self.get_latency(MTDName))
         
