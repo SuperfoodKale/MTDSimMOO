@@ -1,0 +1,845 @@
+# attack_statistics-checkpoint.py
+import pandas as pd
+import os
+
+
+class AttackStatistics:
+    def __init__(self):
+        self._attack_operation_record = []
+
+    def append_attack_operation_record(self, name, start_time, finish_time, adversary, interrupted_mtd=None):
+        duration = finish_time - start_time
+        interrupted_in = 'None'
+        interrupted_by = 'None'
+        uuid = -1
+        if interrupted_mtd is not None:
+            interrupted_in = interrupted_mtd.get_resource_type()
+            interrupted_by = interrupted_mtd.get_name()
+        if adversary.get_curr_host():
+            uuid = adversary.get_curr_host().uuid
+
+        self._attack_operation_record.append({
+            'name': name,
+            'start_time': start_time,
+            'finish_time': finish_time,
+            'duration': duration,
+            'current_host': adversary.get_curr_host_id(),
+            'current_host_uuid': uuid,
+            'compromise_host': 'None',
+            'compromise_host_uuid': 'None',
+            'current_host_attempt': adversary.get_attack_counter()[adversary.get_curr_host_id()],
+            'cumulative_attempts': adversary.get_curr_attempts(),
+            'cumulative_compromised_hosts': len(adversary.get_compromised_hosts()),
+            'compromise_users': [],
+            'interrupted_in': interrupted_in,
+            'interrupted_by': interrupted_by,
+        })
+
+    def update_compromise_host(self, curr_host):
+        self._attack_operation_record[-1]['compromise_host'] = curr_host.host_id
+        self._attack_operation_record[-1]['compromise_host_uuid'] = curr_host.uuid
+
+    def update_compromise_user(self, user):
+        self._attack_operation_record[-1]['compromise_users'].append(user)
+
+    def get_record(self):
+        return pd.DataFrame(self._attack_operation_record)
+
+    def save_record(self, sim_time, scheme):
+        current_directory = os.getcwd()
+        if not os.path.exists(current_directory + '/experimental_data/attack_records'):
+            os.makedirs(current_directory + '/experimental_data/attack_records')
+        pd.DataFrame(self._attack_operation_record).to_csv('experimental_data/attack_records/attack_operation_record_' +
+                                                           str(sim_time) + '_' + scheme + '.csv', index=False)
+
+    # def get_compromised_attack_operation_counts(self):
+    #     record = pd.DataFrame(self._attack_operation_record)
+    #     return record[~record['compromise_host'].isnull()]['name'].str.split(
+    #         expand=True).stack().value_counts().reset_index().rename(columns={'index': 'name', 0: 'frequency'})
+
+
+# evaluation-checkpoint.py
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+import networkx as nx
+import pandas as pd
+import os
+import seaborn as sns
+directory = os.getcwd()
+
+
+class Evaluation:
+    def __init__(self, network, adversary,  security_metrics_record):
+
+        self._network = network
+        self._adversary = adversary
+        self._mtd_record = network.get_mtd_stats().get_record()
+        self._attack_record = adversary.get_attack_stats().get_record()
+        self.security_metrics_record = security_metrics_record
+        self.create_directories()
+
+    def create_directories(self):
+        os.makedirs(directory + '/experimental_data/plots/', exist_ok=True)
+        return directory
+    
+
+    def compromised_num(self, record=None):
+        if record is None:
+            record = self._attack_record
+        if 'compromise_host_uuid' in record.columns:
+            compromised_hosts = record[record['compromise_host_uuid'] != 'None']['compromise_host_uuid'].unique()
+            return len(compromised_hosts)
+        else:
+            return 0
+
+    def mean_time_to_compromise_10_timestamp(self, run_index = 1):
+        interval = 10
+        record = self._attack_record
+        step = max(record['finish_time']) / interval
+        MTTC = []
+        for i in range(1, interval + 1, 1):
+            compromised_num = self.compromised_num_by_timestamp(step * i)
+            if compromised_num == 0:
+                MTTC.append({f'Mean Time to Compromise_{run_index}': None, 'Time': step * i})
+                continue
+            attack_action_time = record[(record['name'].isin(['SCAN_PORT', 'EXPLOIT_VULN', 'BRUTE_FORCE'])) &
+                                        (record['finish_time'] <= step * i)]['duration'].sum()
+            MTTC.append({f'Mean Time to Compromise_{run_index}': attack_action_time / compromised_num, f'Time_{run_index}': step * i})
+    
+        return MTTC
+    
+    # def mean_time_to_compromise_intervals(self, time_intervals):
+    #     record = self._attack_record
+    #     MTTC = []
+
+    #     for time in time_intervals:
+    #         compromised_num = self.compromised_num_by_timestamp(time)
+    #         if compromised_num == 0:
+    #             continue
+    #         attack_action_time = record[(record['name'].isin(['SCAN_PORT', 'EXPLOIT_VULN', 'BRUTE_FORCE'])) &
+    #                                     (record['finish_time'] <= time)]['duration'].sum()
+    #         MTTC.append({'
+    # ': attack_action_time / compromised_num, 'Time': time})
+        
+    #     return MTTC
+    
+    def compromised_num_by_timestamp(self, timestamp):
+        record = self._attack_record
+        compromised_hosts = record[(record['compromise_host_uuid'] != 'None') &
+                                   (record['finish_time'] <= timestamp)]['compromise_host_uuid'].unique()
+        return len(compromised_hosts)
+
+    def mtd_execution_frequency(self):
+        """
+        The frequency of executing MTDs
+        :return: Total number of executed MTD / Elapsed time
+        """
+        if len(self._mtd_record) == 0:
+            return 0
+        record = self._mtd_record
+        return len(record) / (record.iloc[-1]['finish_time'] - record.iloc[0]['start_time'])
+
+    def evaluation_result_by_compromise_checkpoint(self, checkpoint=None):
+        """
+        The time to reach compromise checkpoints
+
+        ATTACK_ACTION: SCAN_PORT, EXPLOIT_VULN, BRUTE_FORCE
+        Attack action time = The sum of the time duration of all ATTACK_ACTION
+        """
+        if checkpoint is None:
+            checkpoint = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+        record = self._attack_record
+        host_num = self.get_network().get_total_nodes()
+        result = []
+        comp_nums = {}
+        for comp_ratio in checkpoint:
+            comp_nums[comp_ratio] = host_num * comp_ratio
+
+        for comp_ratio, comp_num in comp_nums.items():
+      
+            if 'cumulative_compromised_hosts' not in record.columns:
+                return []
+
+            if max(record['cumulative_compromised_hosts']) < comp_num:
+                break
+            sub_record = record[record['cumulative_compromised_hosts'] <= comp_num]
+            time_to_compromise = sub_record[sub_record[
+                'name'].isin(['SCAN_PORT', 'EXPLOIT_VULN', 'BRUTE_FORCE'])]['duration'].sum()
+            attempt_hosts = sub_record[sub_record['current_host_uuid'] != -1]['current_host_uuid'].unique()
+            attack_actions = sub_record[sub_record['name'].isin(['SCAN_PORT', 'EXPLOIT_VULN', 'BRUTE_FORCE'])]
+            attack_event_num = 0
+            for host in attempt_hosts:
+                attack_event_num += len(attack_actions[(attack_actions['current_host_uuid'] == host) &
+                                                       (attack_actions['name'] == 'SCAN_PORT')])
+            attack_success_rate = comp_num / attack_event_num
+
+            mtd_execution_frequency = self.mtd_execution_frequency()
+
+            state_array, time_series_array = self.get_metrics()
+            # print(state_array, time_series_array) #debug
+
+            total_asr, total_time_to_compromise, total_compromises = 0, 0, 0
+
+            #M1T1
+            result.append({'time_to_compromise': time_to_compromise,
+                           'attack_success_rate': attack_success_rate,
+                           'host_compromise_ratio': comp_ratio,
+                           'mtd_execution_frequency': mtd_execution_frequency,
+                           "exposed_endpoints": state_array[1],
+                           "attack_path_exposure": state_array[2],
+                           "roa": state_array[4],
+                           "shortest_path_variability": state_array[5],
+                           "risk": state_array[6],
+                           "total_downtime": self.total_downtime(),
+                           "total_latency": self.total_latency(),
+                           "total_agent_time": self.total_agent_time(),
+                           "total_mtd_actions": self.total_mtd_actions(),
+                           })
+
+    
+        return result
+
+    def compromise_record_by_attack_action(self, action=None):
+        """
+        :return: a list of attack record that contains hosts compromised by the given action
+        """
+        record = self._attack_record
+        if action is None:
+            return record[record['compromise_host'] != 'None']
+        return record[(record['name'] == action) &
+                      (record['compromise_host'] != 'None')]
+
+    def get_metrics(self,env = None ):
+        # State metrics
+
+        compromised_num = self.compromised_num()
+        host_compromise_ratio = compromised_num/len(self._network.get_hosts()) \
+
+        exposed_endpoints = len(self._network.get_exposed_endpoints())
+
+        attack_path_exposure = self._network.attack_path_exposure()
+
+        attack_stats = self._adversary.get_network().get_scorer().get_statistics()
+        risk = attack_stats['Vulnerabilities Exploited']['risk'][-1] if attack_stats['Vulnerabilities Exploited']['risk'] else 0
+        roa = attack_stats['Vulnerabilities Exploited']['roa'][-1] if attack_stats['Vulnerabilities Exploited']['roa'] else 0
+
+        shortest_paths = self._network.scorer.shortest_path_record 
+        shortest_path_variability = (len(shortest_paths[-1]) - len(shortest_paths[-2]))/len(shortest_paths) if len(shortest_paths) > 1 else 0
+
+        # evaluation_results = self.evaluation_result_by_compromise_checkpoint(np.arange(0.01, 1.01, 0.01))
+        # if evaluation_results:
+        #     total_asr, total_time_to_compromise, total_compromises = 0, 0, 0
+
+        #     for result in evaluation_results:
+        #         if result['host_compromise_ratio'] != 0:  
+        #             total_time_to_compromise += result['time_to_compromise']
+        #             total_compromises += 1
+        #         total_asr += result['attack_success_rate']
+
+        #     overall_asr_avg = total_asr / len(evaluation_results) if evaluation_results else 0
+        #     overall_mttc_avg = total_time_to_compromise / total_compromises if total_compromises else 0
+        # else:
+        overall_asr_avg = 0
+        overall_mttc_avg = 0
+
+
+        # Time-series metrics
+        # time_since_last_mtd = env.now - self._network.last_mtd_triggered_time
+        time_since_last_mtd = 1
+        mtd_freq = self.mtd_execution_frequency()
+
+        state_array = [host_compromise_ratio, exposed_endpoints, attack_path_exposure, overall_asr_avg, roa, shortest_path_variability, risk]
+ 
+
+        time_series_array = [mtd_freq, overall_mttc_avg, time_since_last_mtd]
+
+        # self.security_metrics_record.append_security_metric_record(state_array,time_series_array, env.now)
+ 
+        return [state_array, time_series_array]
+
+
+    def draw_network(self):
+        """
+        Draws the topology of the network while also highlighting compromised and exposed endpoint nodes.
+        """
+        plt.figure(1, figsize=(15, 12))
+        nx.draw(self._network.graph, pos=self._network.pos, node_color=self._network.colour_map, with_labels=True)
+        plt.savefig(directory + '/experimental_data/plots/',+ '/network.png')
+        plt.show()
+
+    def draw_hacker_visible(self):
+        """
+        Draws the network that is visible for the hacker
+        """
+        subgraph = self._network.get_hacker_visible_graph()
+        plt.figure(1, figsize=(15, 12))
+        nx.draw(subgraph, pos=self._network.pos, with_labels=True)
+        plt.show()
+
+    def draw_compromised(self):
+        """
+        Draws the network of compromised hosts
+        """
+        compromised_hosts = self._adversary.get_compromised_hosts()
+        subgraph = self._network.graph.subgraph(compromised_hosts)
+        colour_map = []
+        c_hosts = sorted(compromised_hosts)
+        for node_id in c_hosts:
+            if node_id in self._network.exposed_endpoints:
+                colour_map.append("green")
+            else:
+                colour_map.append("red")
+
+        plt.figure(1, figsize=(15, 12))
+        nx.draw(subgraph, pos=self._network.pos, node_color=colour_map, with_labels=True)
+        plt.show()
+
+    def visualise_attack_operation_group_by_host(self):
+        """
+        visualise the action flow of attack operation group by host ids.
+        """
+        record = self._attack_record
+
+        fig, ax = plt.subplots(1, figsize=(16, 5))
+        colors = ['purple', 'blue', 'green', 'yellow', 'orange', 'red']
+        attack_action_legend = []
+        attack_action_legend_name = []
+        for i, v in enumerate(record['name'].unique()):
+            record.loc[record.name == v, 'color'] = colors[i]
+            attack_action_legend.append(Line2D([0], [0], color=colors[i], lw=4))
+            attack_action_legend_name.append(v)
+
+        hosts = record['current_host_uuid'].unique()
+        host_token = [str(x) for x in range(len(hosts))]
+        for i, v in enumerate(hosts):
+            record.loc[record['current_host_uuid'] == v, 'curr_host_token'] = host_token[i]
+
+        ax.barh(record['curr_host_token'], record['duration'],
+                left=record['start_time'], height=0.4, color=record['color'])
+
+        ax.legend(attack_action_legend, attack_action_legend_name, loc='lower left')
+        plt.gca().invert_yaxis()
+        plt.xlabel('Time', weight='bold', fontsize=18)
+        plt.ylabel('Hosts', weight='bold', fontsize=18)
+        fig.tight_layout()
+        plt.savefig(directory + '/experimental_data/plots/','/attack_action_record_group_by_host.png')
+        plt.show()
+
+    def visualise_attack_operation(self):
+        """
+        visualise the action flow of attack operation
+        """
+        record = self._attack_record
+        fig, ax = plt.subplots(1, figsize=(16, 5))
+        ax.barh(record['name'], record['duration'],
+                left=record['start_time'], height=0.1, zorder=1)
+
+        interrupted_record = record[record['interrupted_in'] != 'None']
+        interrupted_record['color'] = np.where(interrupted_record['interrupted_in'] == 'network', 'green', 'orange')
+        ax.scatter(interrupted_record['finish_time'], interrupted_record['name'], color=interrupted_record['color'],
+                   zorder=3)
+
+        compromise_record = record[record['compromise_host'] != 'None']
+        print("total compromised hosts: ", len(compromise_record))
+        ax.scatter(compromise_record['finish_time'], compromise_record['name'], color='red', zorder=2)
+
+        custom_lines_attack = [Line2D([0], [0], marker='o', color='w', markerfacecolor='green', markersize=10),
+                               Line2D([0], [0], marker='o', color='w', markerfacecolor='orange', markersize=10),
+                               Line2D([0], [0], marker='o', color='w', markerfacecolor='red', markersize=10), ]
+
+        ax.legend(custom_lines_attack, ['network layer MTD', 'application layer MTD', 'compromise host'],
+                  loc='upper right')
+
+        plt.gca().invert_yaxis()
+        plt.xlabel('Time', weight='bold', fontsize=18)
+        plt.ylabel('Attack Actions', weight='bold', fontsize=18)
+        fig.tight_layout()
+        plt.savefig(directory + '/experimental_data/plots/',+ '/attack_record.png')
+        plt.show()
+
+    def visualise_mtd_operation(self):
+        """
+        visualise the action flow of mtd operation
+        """
+        if len(self._mtd_record) == 0:
+            return
+        record = self._mtd_record
+        fig, ax = plt.subplots(1, figsize=(16, 6))
+        colors = ['blue', 'green', 'orange']
+        mtd_action_legend = []
+        mtd_action_legend_name = []
+        for i, v in enumerate(record['executed_at'].unique()):
+            record.loc[record['executed_at'] == v, 'color'] = colors[i]
+            mtd_action_legend.append(Line2D([0], [0], color=colors[i], lw=4))
+            mtd_action_legend_name.append(v)
+        ax.barh(record['name'].astype(str), record['duration'],
+                left=record['start_time'], height=0.4, color=record['color'])
+        ax.legend(mtd_action_legend, mtd_action_legend_name, loc='lower right')
+        plt.gca().invert_yaxis()
+        plt.xlabel('Time', weight='bold', fontsize=18)
+        plt.ylabel('MTD Strategies', weight='bold', fontsize=18)
+        fig.tight_layout()
+        plt.savefig(directory + '/experimental_data/plots/',+ '/mtd_record.png')
+        plt.show()
+
+
+
+    def get_network(self):
+        return self._network
+    
+    def visualize_host_compromise_ratio(self):
+        record = self._security_metric_record
+        plt.figure(1, figsize=(16, 5))
+        plt.plot(record['times'], record['host_compromise_ratio'], label='Host Compromise Ratio')
+        plt.xlabel('Time', weight='bold', fontsize=18)
+        plt.ylabel('Host Compromise Ratio', weight='bold', fontsize=18)
+        plt.legend()
+        plt.savefig(directory + '/experimental_data/plots/host_compromise_ratio.png')
+        plt.show()
+
+    def visualize_attack_path_exposure_score(self):
+        record = self._security_metric_record
+        plt.figure(1, figsize=(16, 5))
+        plt.plot(record['times'], record['attack_path_exposure_score'], label='Attack Path Exposure Score')
+        plt.xlabel('Time', weight='bold', fontsize=18)
+        plt.ylabel('Attack Path Exposure Score', weight='bold', fontsize=18)
+        plt.legend()
+        plt.savefig(directory + '/experimental_data/plots/attack_path_exposure_score.png')
+        plt.show()
+    
+    def visualize_risk(self):
+        record = self._security_metric_record
+        plt.figure(1, figsize=(16, 5))
+        plt.plot(record['times'], record['risk'], label='Risk')
+        plt.xlabel('Time', weight='bold', fontsize=18)
+        plt.ylabel('Risk', weight='bold', fontsize=18)
+        plt.legend()
+        plt.savefig(directory + '/experimental_data/plots/risk.png')
+        plt.show()
+
+    #M1T1
+    def total_downtime(self):
+        return sum(host.get_downtime() for host in self._network.get_host_objects())
+
+    def total_latency(self):
+        return sum(host.get_latency() for host in self._network.get_host_objects())
+
+    def total_agent_time(self):
+        return sum(host.get_agent_time() for host in self._network.get_host_objects())
+
+    def total_mtd_actions(self):
+        return len(self._mtd_record)
+
+
+# mtd_statistics-checkpoint.py
+import pandas as pd
+import os
+
+
+class MTDStatistics:
+    def __init__(self):
+        self._mtd_operation_record = []
+        self._total_suspended = 0
+        self._total_triggered = 0
+        self._total_executed = 0
+        self._total_attack_interrupted = 0
+        self._switch_mtd_interval_at = {}
+        self._switch_mtd_strategy_at = {}
+
+    def append_mtd_operation_record(self, mtd_strategy, start_time, finish_time, duration):
+        self._mtd_operation_record.append({
+            'name': mtd_strategy.get_name(),
+            'start_time': start_time,
+            'finish_time': finish_time,
+            'duration': duration,
+            'executed_at': mtd_strategy.get_resource_type()
+        })
+        self._total_executed += 1
+
+    def append_mtd_interval_record(self, timestamp, mtd_interval):
+        self._switch_mtd_interval_at[timestamp] = mtd_interval
+
+    def append_mtd_strategy_record(self, timestamp, mtd_strategy):
+        self._switch_mtd_strategy_at[timestamp] = mtd_strategy
+
+    def dict(self):
+        return {
+            'Total suspended MTD': self._total_suspended,
+            'Total executed MTD': self._total_executed,
+            'Total attack interrupted': self._total_attack_interrupted,
+            'Switch MTD interval at': self._switch_mtd_interval_at,
+            'Switch MTD strategy at': self._switch_mtd_strategy_at
+        }
+
+    def add_total_attack_interrupted(self):
+        self._total_attack_interrupted += 1
+
+    def add_total_suspended(self):
+        self._total_suspended += 1
+
+    def add_total_triggered(self):
+        self._total_triggered += 1
+
+    def get_record(self):
+        return pd.DataFrame(self._mtd_operation_record)
+
+    def save_record(self, sim_time, scheme):
+        current_directory = os.getcwd()
+        if not os.path.exists(current_directory + '/experimental_data/mtd_records'):
+            os.makedirs(current_directory + '/experimental_data/mtd_records')
+        pd.DataFrame(self._mtd_operation_record).to_csv('experimental_data/mtd_records/mtd_operation_record_' +
+                                                        str(sim_time) + '_' + scheme + '.csv', index=False)
+
+    def get_total_attack_interrupted(self):
+        return self._total_attack_interrupted
+
+
+# scorer-checkpoint.py
+# import mtdnetwork.irrelevant_stuff.exceptions as exceptions
+
+import numpy as np
+class Statistics:
+
+    def __init__(self, record_type):
+        """
+        Statistics when events have occurred for a particular type of event.
+
+        Parameters:
+            record_type:
+                the name of the type of record
+        """
+        self.record_type = record_type
+        self.x_list = []
+        self.y_list = []
+
+    def add_event(self, x, y):
+        self.x_list.append(x)
+        self.y_list.append(y)
+
+    def get_dict(self):
+        cumul_y = [i + 1 for i in range(len(self.y_list))]
+        return {
+            "record name": self.record_type,
+            "x": self.x_list,
+            "y": self.y_list,
+            "cumulative y": cumul_y,
+            "total events": len(self.y_list)
+        }
+
+    def __str__(self):
+        return self.record_type
+
+
+class CompromiseStatistics(Statistics):
+
+    def __init__(self, record_type):
+        self.non_exposed_x = []
+        self.non_exposed_y = []
+        super().__init__(record_type)
+
+    def add_event(self, x, host_instance):
+        host_id = host_instance.host_id
+        if not host_instance.is_exposed_endpoint():
+            self.non_exposed_x.append(x)
+            self.non_exposed_y.append(host_id)
+
+        self.x_list.append(x)
+        self.y_list.append(host_id)
+
+    def get_dict(self):
+        cumul_y = [i + 1 for i in range(len(self.y_list))]
+        cumul_non_exposed_y = [i + 1 for i in range(len(self.non_exposed_y))]
+
+        return {
+            "record name": self.record_type,
+            "x": self.x_list,
+            "y": self.y_list,
+            "cumulative y": cumul_y,
+            "total events": len(self.y_list),
+            "not exposed x": self.non_exposed_x,
+            "not exposed y": self.non_exposed_y,
+            "cumulative not exposed y": cumul_non_exposed_y,
+            "total not exposed events": len(self.non_exposed_y)
+        }
+
+
+class VulnStatistics(Statistics):
+    def __init__(self, record_type):
+        self.roa_list = []
+        self.impact_list = []
+        self.complexity_list = []
+        self.risk_list = []
+        self.has_os_dependency = 0
+        self.has_dependent_vulns = 0
+        super().__init__(record_type)
+
+    def add_event(self, curr_time, vuln):
+        self.x_list.append(curr_time)
+        self.roa_list.append(vuln.roa())
+        self.impact_list.append(vuln.impact)
+        self.complexity_list.append(vuln.complexity)
+        self.risk_list.append(vuln.risk())
+        self.has_os_dependency += 1 if vuln.has_os_dependency else 0
+        self.has_dependent_vulns += 1 if vuln.has_dependent_vulns else 0
+
+    def get_dict(self):
+        cumulative_exploited_vulns = [i + 1 for i in range(len(self.x_list))]
+        return {
+            "record name": self.record_type,
+            "x": self.x_list,
+            "cumulative exploited vulns": cumulative_exploited_vulns,
+            "roa": self.roa_list,
+            "impact": self.impact_list,
+            "risk": self.risk_list,
+            "complexity": self.complexity_list,
+            "total had os dependency": self.has_os_dependency,
+            "total were dependent on another vuln": self.has_dependent_vulns
+        }
+
+
+class MTDStatistics(Statistics):
+
+    def __init__(self, record_type):
+        self.blocked_x_list = []
+        self.blocked_y_list = []
+        super().__init__(record_type)
+
+    def add_blocked_event(self, x, y):
+        self.blocked_x_list.append(x)
+        self.blocked_y_list.append(y)
+
+    def get_dict(self):
+        cumul_y = [i + 1 for i in range(len(self.y_list))]
+        cumul_blocked_y = [i + 1 for i in range(len(self.blocked_y_list))]
+        return {
+            "record name": self.record_type,
+            "x": self.x_list,
+            "y": self.y_list,
+            "cumulative y": cumul_y,
+            "total events": len(self.y_list),
+            "blocked times": self.blocked_x_list,
+            "total blocks": len(self.blocked_x_list),
+            "blocked values": self.blocked_y_list,
+            "cumulative blocked": cumul_blocked_y
+        }
+
+
+class Scorer:
+
+    def __init__(self):
+        self.host_compromises = CompromiseStatistics("Host Compromises")
+        self.host_vuln_compromises = CompromiseStatistics("Vuln Compromises")
+        self.host_reuse_pass_compromises = CompromiseStatistics("Reuse Password Compromises")
+        self.host_pass_spray_compromises = CompromiseStatistics("Password Spray Compromises")
+        self.user_account_leaks = Statistics("User Account Has Been Leaked By Compromise")
+        self.attack_path_exposure = []
+        self.shortest_path_record = []
+
+        # Gather statistics on the types of vulnerabilities that were exploited
+        # eg. RoA score, impact and complexity
+        self.vuln_compromises = VulnStatistics("Vulnerabilities Exploited")
+
+        self.last_mtd = None
+        self.mtd_statistics = []
+
+  
+    def register_mtd(self, mtd_strategy):
+        self.mtd_statistics.append(MTDStatistics(str(mtd_strategy)))
+
+    def set_last_mtd(self, mtd_strategy):
+        """
+        Sets the last triggered MTD strategy for logging which MTD strategies blocked changes
+        """
+        mtd_name = str(mtd_strategy)
+        for mtd_stat in self.mtd_statistics:
+            if mtd_name == str(mtd_stat):
+                self.last_mtd = mtd_stat
+                return
+
+        self.last_mtd = None
+
+    # def add_mtd_blocked_event(self, curr_time):
+    #     if not self.last_mtd == None:
+    #         self.last_mtd.add_blocked_event(curr_time, str(self.last_mtd))
+    #     else:
+    #         raise exceptions.CannotAddMTDEventToScorerError
+
+    # def add_mtd_event(self, curr_time):
+    #     """
+    #     Logs when an MTD event is triggered
+    #     """
+    #     if not self.last_mtd == None:
+    #         self.last_mtd.add_event(curr_time, 1)
+    #     else:
+    #         raise exceptions.CannotAddMTDEventToScorerError
+
+    def add_host_compromise(self, curr_time, host_instance):
+        # host_os_type = host_instance.os_type
+        # host_os_version = host_instance.os_version
+        # host_type = "{} {}".format(host_os_type, host_os_version)
+        self.host_compromises.add_event(curr_time, host_instance)
+
+    def add_host_vuln_compromise(self, curr_time, host_instance):
+        self.add_host_compromise(curr_time, host_instance)
+        # host_os_type = host_instance.os_type
+        # host_os_version = host_instance.os_version
+        # host_type = "{} {}".format(host_os_type, host_os_version)
+        self.host_vuln_compromises.add_event(curr_time, host_instance)
+
+    def add_host_reuse_pass_compromise(self, curr_time, host_instance):
+        self.add_host_compromise(curr_time, host_instance)
+        # host_os_type = host_instance.os_type
+        # host_os_version = host_instance.os_version
+        # host_type = "{} {}".format(host_os_type, host_os_version)
+        self.host_reuse_pass_compromises.add_event(curr_time, host_instance)
+
+    def add_host_pass_spray_compromise(self, curr_time, host_instance):
+        self.add_host_compromise(curr_time, host_instance)
+        # host_os_type = host_instance.os_type
+        # host_os_version = host_instance.os_version
+        # host_type = "{} {}".format(host_os_type, host_os_version)
+        self.host_pass_spray_compromises.add_event(curr_time, host_instance)
+
+    def add_user_account_leak(self, curr_time, username):
+        self.user_account_leaks.add_event(curr_time, username)
+
+    def add_vuln_compromise(self, curr_time, vuln):
+        self.vuln_compromises.add_event(curr_time, vuln)
+
+    def add_attack_path_exposure(self, score):
+        self.attack_path_exposure.append(score)
+
+    def add_shortest_path(self, score):
+        self.shortest_path_record.append(score)
+
+
+    def set_initial_statistics(self, network):
+        """
+        Collects statistics on the initial state of the network
+        """
+
+        self.stats = {}
+
+        hosts = network.get_hosts()
+
+        total_vulns = 0
+
+        host_os_type_and_version_vuln_roa = {}
+
+        os_types_in_network = {}
+        hosts_without_vulns = 0
+
+        for host_id, host_instance in hosts.items():
+            host_os = host_instance.os_type
+            host_version = host_instance.os_version
+
+            os_type = "{} {}".format(host_os, host_version)
+            os_types_in_network[os_type] = os_types_in_network.get(os_type, 0) + 1
+            host_vulns = host_instance.get_all_vulns()
+
+            total_vulns += len(host_vulns)
+
+            if len(host_vulns) == 0:
+                hosts_without_vulns += 1
+
+            for v in host_vulns:
+                roa = v.initial_roa()
+                if not host_os in host_os_type_and_version_vuln_roa:
+                    host_os_type_and_version_vuln_roa[host_os] = {}
+
+                if not v in host_os_type_and_version_vuln_roa[host_os].get(host_version, []):
+                    host_os_type_and_version_vuln_roa[host_os][host_version] = host_os_type_and_version_vuln_roa[
+                                                                                   host_os].get(host_version, []) + [
+                                                                                   roa]
+
+        vulns_per_os = {}
+        avg_roa_per_os = {}
+
+        for host_os in host_os_type_and_version_vuln_roa:
+            if not host_os in vulns_per_os:
+                vulns_per_os[host_os] = {}
+                avg_roa_per_os[host_os] = {}
+
+            for host_os_type in host_os_type_and_version_vuln_roa[host_os]:
+                roa_list = host_os_type_and_version_vuln_roa[host_os][host_os_type]
+                vulns_per_os[host_os][host_os_type] = len(roa_list)
+                avg_roa_per_os[host_os][host_os_type] = sum(roa_list) / len(roa_list)
+
+        self.stats["Total Initial Vulnerabilities (Sum of all Vulns on all hosts)"] = total_vulns
+        self.stats["Total Unique Vulnerabilities"] = len(network.get_vuln_dict())
+        self.stats["Initial Vulns Per OS (Sum of all Vulns on those OS)"] = vulns_per_os
+        self.stats["Average Initial RoA Per OS"] = avg_roa_per_os
+        self.stats["OS Types In Initial Network"] = os_types_in_network
+        self.stats["Initial Hosts Without Vulnerabilities"] = hosts_without_vulns
+
+    def get_statistics(self):
+        stats = self.stats
+        stats["Host Compromises"] = self.host_compromises.get_dict()
+        stats["Vuln Compromises"] = self.host_vuln_compromises.get_dict()
+        stats["Reuse Password Compromises"] = self.host_reuse_pass_compromises.get_dict()
+        stats["Password Spray Compromises"] = self.host_pass_spray_compromises.get_dict()
+        stats["User Account Leaks"] = self.user_account_leaks.get_dict()
+        stats["Vulnerabilities Exploited"] = self.vuln_compromises.get_dict()
+        stats["MTD Statistics"] = [
+            mtd_statistic.get_dict()
+            for mtd_statistic in self.mtd_statistics
+        ]
+        stats["Total MTD Events"] = sum([
+            mtd_statistic.get_dict()["total events"]
+            for mtd_statistic in self.mtd_statistics
+        ])
+        stats["Total MTD Blocking Hacker Events"] = sum([
+            mtd_statistic.get_dict()["total blocks"]
+            for mtd_statistic in self.mtd_statistics
+        ])
+        stats["Attack Path Exposure Scores"] = self.attack_path_exposure
+
+        return stats
+
+
+# security_metric_evaluations-checkpoint.py
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def visualize_metric_ratio(evaluations, metric_column):
+    combined_df = pd.concat(evaluations)
+    grouped_df = combined_df.groupby('times')[metric_column].agg(['mean', 'std']).reset_index()
+
+    # Plot
+    plt.errorbar(grouped_df['times'], grouped_df['mean'], yerr=grouped_df['std'], fmt='o', ecolor='r', capthick=2, capsize=5)
+    plt.plot(grouped_df['times'], grouped_df['mean'], linestyle='-', color='b')  # Add line plot
+
+    plt.xlabel('Times')
+    plt.ylabel(f'Average {metric_column.replace("_", " ").title()}')
+    plt.title(f'Average {metric_column.replace("_", " ").title()} vs Times with Error Bars')
+    plt.grid(True)
+    plt.show()
+
+# security_metric_statistics-checkpoint.py
+import pandas as pd
+import os
+
+class SecurityMetricStatistics:
+    def __init__(self):
+        self._metric_record = {
+            'CompleteTopologyShuffle': 0,
+            'IPShuffle':0,
+            'OSDiversity':0,
+            'ServiceDiversity':0
+        }
+
+    def increment_metric(self, field_name):
+        if field_name in self._metric_record:
+            self._metric_record[field_name] += 1
+        else:
+            print(f"{field_name} is not a valid field in the metric record.")
+
+    def get_record(self):
+        df = pd.DataFrame(self._metric_record)
+        df = df.drop_duplicates(subset=['times'], keep='last')
+        return df
+
+

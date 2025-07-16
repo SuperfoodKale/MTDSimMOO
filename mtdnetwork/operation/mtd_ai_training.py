@@ -54,7 +54,7 @@ class MTDAITraining:
 
         self.attack_dict = {"SCAN_HOST": 1, "ENUM_HOST": 2, "SCAN_PORT": 3, "EXPLOIT_VULN": 4, "SCAN_NEIGHBOR": 5, "BRUTE_FORCE": 6}
 
-        self.evaluation = Evaluation(self.network, self.adversary, self.security_metric_record)        
+        self.evaluation = Evaluation(network=network, adversary=adversary,  security_metrics_record = security_metrics_record, cost_metrics_record=network.get_cost_metric_stats())
 
     def proceed_mtd(self):
         if self.network.get_unfinished_mtd():
@@ -82,8 +82,13 @@ class MTDAITraining:
             # Static network degradation factor (if exceed 1000 force to deploy MTD)
 
             while (self.env.now - self.network.get_last_mtd_triggered_time()) > 2000 and action == 0:
-                action =  choose_action(state, time_series, self.main_network, 5, self.epsilon)
-
+                import time 
+                    start_time = time.perf_counter()
+                    action = choose_action(state, time_series, self.main_network, 5, self.epsilon)
+                    finish_time = time.perf_counter()
+                    agent_time = finish_time - start_time
+                    for host in self.network.get_host_objects():
+                        host.add_agent_time(ms = agent_time)
                 
 
             if action > 0 or self.network.get_last_mtd_triggered_time() == 0:
@@ -146,6 +151,17 @@ class MTDAITraining:
 
         finish_time = env.now + self._proceed_time
         duration = finish_time - start_time
+
+        #applies the duration taken to execute the MTDaction as downtime to all hosts
+        for host in self.network.get_host_objects():
+            host.add_downtime(duration=duration)
+
+        MTDName =  str(mtd.get_name())
+        for host in self.network.get_host_objects():
+            host.add_latency(ms=self.get_latency(MTDName))
+        
+        self.network.get_cost_stats().append(finish_time, self.network)
+
         
         if self.logging:
             logging.info('MTD: %s finished in %.1fs at %.1fs.' % (mtd.get_name(), duration, finish_time))
@@ -300,9 +316,27 @@ class MTDAITraining:
  
         state_array = np.array([host_compromise_ratio, exposed_endpoints, attack_path_exposure, attack_success_rate, roa, shortest_path_variability, risk, current_attack_value])
  
+        cost_df = self.network.get_cost_stats().get_record()
+        if not cost_df.empty:
+            last = cost_df.iloc[-1]
+            total_downtime = last['downtime']
+            total_latency = last['latency']
+            total_agent_time = last['agent_time']
+        else:
+            total_downtime = total_latency = total_agent_time = 0.0
 
-        time_series_array = np.array([mtd_freq, overall_time_to_compromise, time_since_last_mtd])
+        time_series_array = np.array([mtd_freq, overall_mttc_avg, time_since_last_mtd, total_downtime, total_latency, total_agent_time])
         # print("State Array",state_array)
         # print("Time Series Array", time_series_array)
         return state_array, time_series_array
+
+
+    def get_latency(self, mtd):
+        LATENCY_VALUES = {
+            "CompleteTopologyShuffle": 5350,  
+            "IPShuffle": 200,
+            "OSDiversity": 150,
+            "ServiceDiversity": 5000,
+        }
+        return LATENCY_VALUES.get(mtd,None)
     

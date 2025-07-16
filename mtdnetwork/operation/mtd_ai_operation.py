@@ -51,7 +51,7 @@ class MTDAIOperation:
             'EXPLOIT_VULN': 5,
             'BRUTE_FORCE': 6,
         }
-        self.evaluation = Evaluation(network=network, adversary=adversary,  security_metrics_record = security_metrics_record)
+        self.evaluation = Evaluation(network=network, adversary=adversary,  security_metrics_record = security_metrics_record, cost_metrics_record=network.get_cost_metric_stats())
 
         self.attack_dict = {"SCAN_HOST": 1, "ENUM_HOST": 2, "SCAN_PORT": 3, "EXPLOIT_VULN": 4, "SCAN_NEIGHBOR": 5, "BRUTE_FORCE": 6}
 
@@ -178,7 +178,7 @@ class MTDAIOperation:
         for host in self.network.get_host_objects():
             host.add_latency(ms=self.get_latency(MTDName))
         
-        
+        self.network.get_cost_stats().append(finish_time, self.network)
         
         if self.logging:
             logging.info('MTD: %s finished in %.1fs at %.1fs.' % (mtd.get_name(), duration, finish_time))
@@ -297,9 +297,17 @@ class MTDAIOperation:
         mtd_freq = self.evaluation.mtd_execution_frequency()
 
         state_array = np.array([host_compromise_ratio, exposed_endpoints, attack_path_exposure, overall_asr_avg, roa, shortest_path_variability, risk, current_attack_value])
- 
 
-        time_series_array = np.array([mtd_freq, overall_mttc_avg, time_since_last_mtd])
+        cost_df = self.network.get_cost_stats().get_record()
+        if not cost_df.empty:
+            last = cost_df.iloc[-1]
+            total_downtime = last['downtime']
+            total_latency = last['latency']
+            total_agent_time = last['agent_time']
+        else:
+            total_downtime = total_latency = total_agent_time = 0.0
+
+        time_series_array = np.array([mtd_freq, overall_mttc_avg, time_since_last_mtd, total_downtime, total_latency, total_agent_time])
 
         # self.security_metrics_record.append_security_metric_record(state_array,time_series_array, env.now)
  

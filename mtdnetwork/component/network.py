@@ -1039,3 +1039,5 @@ class Network:
         nx.draw(self.graph, pos=self.pos, node_color=self.colour_map, with_labels=True)
         directory = os.getcwd()
         plt.savefig(directory + '/experimental_data/plots/network.png')
+
+    def 

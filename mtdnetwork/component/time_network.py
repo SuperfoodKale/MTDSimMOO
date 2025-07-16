@@ -3,7 +3,7 @@ from mtdnetwork.statistic.mtd_statistics import MTDStatistics
 from mtdnetwork.component.host import Host
 from mtdnetwork.statistic.security_metric_statistics import SecurityMetricStatistics
 import random
-
+from mtdnetwork.statistic.cost_metric_statistics import CostMetricStatistics
 
 class TimeNetwork(Network):
 
@@ -21,7 +21,8 @@ class TimeNetwork(Network):
                          total_layers=total_layers, target_layer=target_layer, total_database=total_database)
         self.init_network()
         self.last_mtd_triggered_time = 0
-
+        self._cost_metric_stats = CostMetricStatistics() 
+        
 
     def setup_network(self):
         """
@@ -72,6 +73,7 @@ class TimeNetwork(Network):
     def get_security_metric_stats(self):
         return self._security_metric_stats
 
-
+    def get_cost_metric_stats(self):
+        return self._cost_metric_stats 
 
 

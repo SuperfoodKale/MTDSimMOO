@@ -9,7 +9,7 @@ directory = os.getcwd()
 
 
 class Evaluation:
-    def __init__(self, network, adversary,  security_metrics_record):
+    def __init__(self, network, adversary,  security_metrics_record, cost_metrics_record):
 
         self._network = network
         self._adversary = adversary
@@ -17,6 +17,7 @@ class Evaluation:
         self._attack_record = adversary.get_attack_stats().get_record()
         self.security_metrics_record = security_metrics_record
         self.create_directories()
+        self.cost_metrics_record = cost_metrics_record
 
     def create_directories(self):
         os.makedirs(directory + '/experimental_data/plots/', exist_ok=True)
@@ -369,3 +370,6 @@ class Evaluation:
 
     def total_mtd_actions(self):
         return len(self._mtd_record)
+
+    def get_cost_time_series(self):
+        return self.cost_metrics_record.get_record()

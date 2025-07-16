@@ -37,8 +37,7 @@ class MTDOperation:
         self.network_layer_resource = simpy.Resource(self.env, 1)
         self.reserve_resource = simpy.Resource(self.env, 1)
 
-        self.evaluation = Evaluation(self.network, self.adversary, self.security_metric_record)
-
+        self.evaluation = Evaluation(network=network, adversary=adversary,  security_metrics_record = security_metrics_record, cost_metrics_record=network.get_cost_metric_stats())
     
         
     
