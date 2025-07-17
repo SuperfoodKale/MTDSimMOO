@@ -149,12 +149,12 @@ def calculate_reward(current_state, current_time_series, next_state, next_time_s
     time_series_weights = {
         "mtd_freq": 20 * context_multiplier,
         "overall_mttc_avg": 75 * context_multiplier,
-        "time_since_last_mtd": -75 * context_multiplier
+        "time_since_last_mtd": -75 * context_multiplier,
 
         #cost
-        "total_downtime": -10 * context_multiplier
-        "total_latency": -10 * context_multiplier
-        "total_agent_time": -10 * context_multiplier
+        "total_downtime": -10 * context_multiplier,
+        "total_latency": -10 * context_multiplier,
+        "total_agent_time": -10 * context_multiplier,
     }
 
     # Calculate reward using normalized or raw values

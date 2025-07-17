@@ -365,7 +365,7 @@ def execute_simulation(start_time=0, finish_time=None, scheme='random', mtd_inte
     else:
         env.run(until=end_event)
     
-    evaluation = Evaluation(network=time_network, adversary=adversary, security_metrics_record = security_metrics_record, cost_metrics_record=network.get_cost_stats())
+    evaluation = Evaluation(network=time_network, adversary=adversary, security_metrics_record = security_metrics_record, cost_metrics_record=time_network.get_cost_stats())
 
     # sim_item = scheme
     # if scheme == 'single':
@@ -580,7 +580,7 @@ def  execute_ai_model(start_time=0, finish_time=None, scheme='mtd_ai', mtd_inter
     else:
         env.run(until=end_event)
 
-    evaluation = Evaluation(network=time_network, adversary=adversary, security_metrics_record = security_metrics_record, cost_metrics_record=network.get_cost_stats())
+    evaluation = Evaluation(network=time_network, adversary=adversary, security_metrics_record = security_metrics_record, cost_metrics_record=time_network.get_cost_stats())
     return evaluation
         
     

@@ -154,7 +154,7 @@ class Evaluation:
         # State metrics
 
         compromised_num = self.compromised_num()
-        host_compromise_ratio = compromised_num/len(self._network.get_hosts()) \
+        host_compromise_ratio = compromised_num/len(self._network.get_hosts()) #\
 
         exposed_endpoints = len(self._network.get_exposed_endpoints())
 
