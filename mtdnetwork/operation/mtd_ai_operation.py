@@ -174,11 +174,11 @@ class MTDAIOperation:
         for host in self.network.get_host_objects():
             host.add_downtime(duration=duration)
 
-        MTDName =  str(mtd.get_name())
-        for host in self.network.get_host_objects():
-            host.add_latency(ms=self.get_latency(MTDName))
+        #MTDName =  str(mtd.get_name())
+        #for host in self.network.get_host_objects():
+        #    host.add_latency(ms=self.get_latency(MTDName))
         
-        self.network.get_cost_stats().append(finish_time, self.network)
+        self.network.get_cost_metric_stats().append(finish_time, self.network)
         
         if self.logging:
             logging.info('MTD: %s finished in %.1fs at %.1fs.' % (mtd.get_name(), duration, finish_time))
@@ -298,16 +298,16 @@ class MTDAIOperation:
 
         state_array = np.array([host_compromise_ratio, exposed_endpoints, attack_path_exposure, overall_asr_avg, roa, shortest_path_variability, risk, current_attack_value])
 
-        cost_df = self.network.get_cost_stats().get_record()
+        cost_df = self.network.get_cost_metric_stats().get_record()
         if not cost_df.empty:
             last = cost_df.iloc[-1]
             total_downtime = last['downtime']
-            total_latency = last['latency']
+            #total_latency = last['latency']
             total_agent_time = last['agent_time']
         else:
-            total_downtime = total_latency = total_agent_time = 0.0
+            total_downtime = total_agent_time = 0.0
 
-        time_series_array = np.array([mtd_freq, overall_mttc_avg, time_since_last_mtd, total_downtime, total_latency, total_agent_time])
+        time_series_array = np.array([mtd_freq, overall_mttc_avg, time_since_last_mtd, total_downtime, total_agent_time])
 
         # self.security_metrics_record.append_security_metric_record(state_array,time_series_array, env.now)
  
@@ -315,12 +315,12 @@ class MTDAIOperation:
 
 
 
-    def get_latency(self, mtd):
-        LATENCY_VALUES = {
-            "CompleteTopologyShuffle": 5350,  
-            "IPShuffle": 200,
-            "OSDiversity": 150,
-            "ServiceDiversity": 5000,
-        }
-        return LATENCY_VALUES.get(mtd,None)
+    #def get_latency(self, mtd):
+    #    LATENCY_VALUES = {
+    #        "CompleteTopologyShuffle": 5350,  
+    #        "IPShuffle": 200,
+    #        "OSDiversity": 150,
+    #        "ServiceDiversity": 5000,
+    #    }
+    #    return LATENCY_VALUES.get(mtd,None)
   

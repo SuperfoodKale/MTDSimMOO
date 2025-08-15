@@ -1040,4 +1040,3 @@ class Network:
         directory = os.getcwd()
         plt.savefig(directory + '/experimental_data/plots/network.png')
 
-    def 

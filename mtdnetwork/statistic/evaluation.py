@@ -132,7 +132,7 @@ class Evaluation:
                            "shortest_path_variability": state_array[5],
                            "risk": state_array[6],
                            "total_downtime": self.total_downtime(),
-                           "total_latency": self.total_latency(),
+                           #"total_latency": self.total_latency(),
                            "total_agent_time": self.total_agent_time(),
                            "total_mtd_actions": self.total_mtd_actions(),
                            })
@@ -362,8 +362,8 @@ class Evaluation:
     def total_downtime(self):
         return sum(host.get_downtime() for host in self._network.get_host_objects())
 
-    def total_latency(self):
-        return sum(host.get_latency() for host in self._network.get_host_objects())
+    #def total_latency(self):
+    #    return sum(host.get_latency() for host in self._network.get_host_objects())
 
     def total_agent_time(self):
         return sum(host.get_agent_time() for host in self._network.get_host_objects())

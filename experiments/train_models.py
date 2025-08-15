@@ -32,7 +32,7 @@ logging.basicConfig(format='%(message)s', level=logging.INFO)
 
 # Static simulator settings
 state_size = 8
-time_series_size = 6
+time_series_size = 5
 action_size = 5
 start_time = 0
 finish_time = 5000

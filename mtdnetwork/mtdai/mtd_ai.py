@@ -153,7 +153,7 @@ def calculate_reward(current_state, current_time_series, next_state, next_time_s
 
         #cost
         "total_downtime": -10 * context_multiplier,
-        "total_latency": -10 * context_multiplier,
+        #"total_latency": -10 * context_multiplier,
         "total_agent_time": -10 * context_multiplier,
     }
 
