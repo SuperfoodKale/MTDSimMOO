@@ -7,13 +7,13 @@ import numpy as np
 from mtdnetwork.mtdai.mtd_ai import update_target_model, choose_action, replay, calculate_reward
 import pandas as pd
 import random
-
+from mtdnetwork.component.host import Host
 
 class MTDAITraining:
 
     def __init__(self,security_metric_record, features,env, end_event, network, attack_operation, scheme, adversary, proceed_time=0,
                  mtd_trigger_interval=None, custom_strategies=None, main_network=None, target_network=None, memory=None,
-                 gamma=None, epsilon=None, epsilon_min=None, epsilon_decay=None, train_start=None, batch_size=None, attacker_sensitivity = 1):
+                 gamma=None, epsilon=None, epsilon_min=None, epsilon_decay=None, train_start=None, batch_size=None, attacker_sensitivity = 1, static_degrade_factor = 2000):
         """
         :param env: the parameter to facilitate simPY env framework
         :param network: the simulation network
@@ -33,12 +33,14 @@ class MTDAITraining:
 
         self._mtd_scheme = MTDScheme(network=network, scheme=scheme, mtd_trigger_interval=mtd_trigger_interval,
                                      custom_strategies=custom_strategies)
+        self.custom_strategies = custom_strategies
+     
         self._proceed_time = proceed_time
 
         self.application_layer_resource = simpy.Resource(self.env, 1)
         self.network_layer_resource = simpy.Resource(self.env, 1)
         self.reserve_resource = simpy.Resource(self.env, 1)
-
+        self.features = features
         self.main_network = main_network
         self.target_network = target_network
         self.memory = memory
@@ -48,13 +50,18 @@ class MTDAITraining:
         self.epsilon_decay = epsilon_decay
         self.train_start = train_start
         self.batch_size = batch_size
-        self.features = features
+
         self.security_metric_record = security_metric_record
         self.attacker_sensitivity = attacker_sensitivity
-
+        self.static_degrade_factor = static_degrade_factor
         self.attack_dict = {"SCAN_HOST": 1, "ENUM_HOST": 2, "SCAN_PORT": 3, "EXPLOIT_VULN": 4, "SCAN_NEIGHBOR": 5, "BRUTE_FORCE": 6}
 
-        self.evaluation = Evaluation(network=network, adversary=adversary,  security_metrics_record = security_metrics_record, cost_metrics_record=network.get_cost_metric_stats())
+        self.evaluation = Evaluation(
+            network=self.network,
+            adversary=self.adversary,
+            security_metrics_record=self.security_metric_record,
+            cost_metrics_record=self.network.get_cost_metric_stats()
+        )
 
     def proceed_mtd(self):
         if self.network.get_unfinished_mtd():
@@ -79,16 +86,21 @@ class MTDAITraining:
             state, time_series = self.get_state_and_time_series()
             action = choose_action(state, time_series, self.main_network, 5, self.epsilon)
 
-            # Static network degradation factor (if exceed 1000 force to deploy MTD)
-
+            # Static network degradation factor (legacy 2000 guard): account for agent_time while we keep exploring
             while (self.env.now - self.network.get_last_mtd_triggered_time()) > 2000 and action == 0:
-                import time 
+                import time
                 start_time = time.perf_counter()
-                action = choose_action(state, time_series, self.main_network, 5, self.epsilon)
+                action =  choose_action(state, time_series, self.main_network, 5, self.epsilon)
                 finish_time = time.perf_counter()
                 agent_time = finish_time - start_time
                 for host in self.network.get_host_objects():
-                    host.add_agent_time(ms = agent_time)
+                    host.add_agent_time(ms=agent_time)
+
+            # Static network degradation factor (if exceed static factor force to deploy MTD)
+            if (self.env.now - self.network.get_last_mtd_triggered_time()) > self.static_degrade_factor: 
+                action = random.randint(1, len(self.custom_strategies) + 1)
+            else: 
+                action = choose_action(state, time_series, self.main_network, len(self.custom_strategies) + 1, self.epsilon)
                 
 
             if action > 0 or self.network.get_last_mtd_triggered_time() == 0:
@@ -152,22 +164,17 @@ class MTDAITraining:
         finish_time = env.now + self._proceed_time
         duration = finish_time - start_time
 
-        #applies the duration taken to execute the MTDaction as downtime to all hosts
+        # Apply MTD execution duration as downtime across hosts (cost metric)
         for host in self.network.get_host_objects():
             host.add_downtime(duration=duration)
 
-        #MTDName =  str(mtd.get_name())
-        #for host in self.network.get_host_objects():
-        #    host.add_latency(ms=self.get_latency(MTDName))
-        
+        # Record cost metrics snapshot after state change
         self.network.get_cost_metric_stats().append(finish_time, self.network)
-
         
         if self.logging:
             logging.info('MTD: %s finished in %.1fs at %.1fs.' % (mtd.get_name(), duration, finish_time))
 
         self.network.last_mtd_triggered_time = self.env.now
-
 
         # release resource
         self._get_mtd_resource(mtd).release(request)
@@ -245,48 +252,53 @@ class MTDAITraining:
     
     def get_state_and_time_series(self):
 
-        exposed_endpoints = len(self.network.get_exposed_endpoints()) # Correct(Checked)
+        previous_ips = self.network.scorer.current_hosts_ip
+        unique_hosts = []
+        for host_id in self.network.nodes:
+            host_ip_address = self.network.graph.nodes[host_id]["host"].ip
+            unique_hosts.append(host_ip_address)
+      
+        if previous_ips:
+            ip_variability = 0
+            longer = unique_hosts if len(unique_hosts) > len(previous_ips) else previous_ips
+            shorter = unique_hosts if len(unique_hosts) < len(previous_ips) else previous_ips
+            for i in range(len(longer)):
+                if ((i + 1) > len(shorter)) or (longer[i] != shorter[i]):
+                    ip_variability += 1
+            ip_variability /= len(unique_hosts)
+        else:
+            ip_variability = 0
 
-        attack_path_exposure = self.network.attack_path_exposure() # Correct(Checked)
+        attack_path_exposure = self.network.attack_path_exposure() 
 
         shortest_paths = self.network.scorer.shortest_path_record 
-        # Extract the lengths of all paths
         path_lengths = [len(path) for path in shortest_paths]
-        # Sort the lengths in ascending order
         sorted_lengths = sorted(path_lengths)
-        # Calculate variability between the two shortest paths
         if len(sorted_lengths) > 1:
-            shortest_path_variability = (sorted_lengths[1] - sorted_lengths[0]) / sorted_lengths[0] # Should be corrected(Checked)
+            shortest_path_variability = abs(sorted_lengths[1] - sorted_lengths[0]) / sorted_lengths[0] 
         else:
             shortest_path_variability = 0
 
-
-        # shortest_distance = self.network.get_path_from_exposed(self.network.target_node, self.network.graph)[1]
-        # print(shortest_distance)
-
+        comp_check_interval = 60
         record = self.adversary.get_attack_stats().get_record()
         if 'compromise_host_uuid' in record.columns:
-            compromised_hosts = record[record['compromise_host_uuid'] != 'None']['compromise_host_uuid'].unique()
+            compromised_hosts = record[record['compromise_host_uuid'] != 'None'].loc[record['start_time'] > (self.env.now - comp_check_interval)]['compromise_host_uuid'].unique()
             compromised_num = len(compromised_hosts)
         else:
             compromised_num = 0    
-        host_compromise_ratio = compromised_num/len(self.network.get_hosts()) # Correct(Checked)
+        host_compromise_ratio = compromised_num/len(self.network.get_hosts()) 
 
-        time_since_last_mtd = self.env.now - self.network.last_mtd_triggered_time # Correct(Checked)
+        time_since_last_mtd = self.env.now - self.network.last_mtd_triggered_time 
 
         mtd_record = self.network.get_mtd_stats().get_record()
-
         if len(mtd_record) == 0:
             mtd_freq = 0
         else:
-            mtd_freq = len(mtd_record) / (mtd_record.iloc[-1]['finish_time'] - mtd_record.iloc[0]['start_time']) # Correct(Checked)
-   
+            mtd_freq = len(mtd_record) / (mtd_record.iloc[-1]['finish_time'] - mtd_record.iloc[0]['start_time']) 
 
         attack_stats = self.adversary.get_network().get_scorer().get_statistics()
-  
         risk = attack_stats['Vulnerabilities Exploited']['risk'][-1] if attack_stats['Vulnerabilities Exploited']['risk'] else 0
         roa = attack_stats['Vulnerabilities Exploited']['roa'][-1] if attack_stats['Vulnerabilities Exploited']['roa'] else 0
- 
 
         if 'cumulative_compromised_hosts' in record.columns:
             sub_record = record[record['cumulative_compromised_hosts'] <= compromised_num]
@@ -295,48 +307,62 @@ class MTDAITraining:
             attack_event_num = 0
             for host in attempt_hosts:
                 attack_event_num += len(attack_actions[(attack_actions['current_host_uuid'] == host) &
-                                                        (attack_actions['name'] == 'SCAN_PORT')])
+                                                    (attack_actions['name'] == 'SCAN_PORT')])
             overall_time_to_compromise = sub_record[sub_record[
-            'name'].isin(['SCAN_PORT', 'EXPLOIT_VULN', 'BRUTE_FORCE'])]['duration'].sum() # Corrected(Checked)
-            attack_success_rate = compromised_num / attack_event_num    # Corrected(Checked)
+                'name'].isin(['SCAN_PORT', 'EXPLOIT_VULN', 'BRUTE_FORCE'])]['duration'].sum()  
+
+            attack_success_rate = compromised_num / attack_event_num  
+
+            # Calculate Mean Time to Compromise
+            if compromised_num > 0:
+                mean_time_to_compromise = (overall_time_to_compromise / len(sub_record[sub_record[
+                'name'].isin(['SCAN_PORT', 'EXPLOIT_VULN', 'BRUTE_FORCE'])])) / 10
+            else:
+                mean_time_to_compromise = 0
         else:
             attack_success_rate = 0
             overall_time_to_compromise = 0
-        
-        
+            mean_time_to_compromise = 0
 
-
-        # Not a metric but indicate the attacker type
+        # Attacker process encoding (default to unknown = 7 to avoid NameError)
+        current_attack_value = 7
         sensitivity_factor = random.random()
         if sensitivity_factor <= self.attacker_sensitivity:
             current_attack = self.adversary.get_curr_process()
             current_attack_value = self.attack_dict.get(current_attack, 7)
 
-            
- 
-        state_array = np.array([host_compromise_ratio, exposed_endpoints, attack_path_exposure, attack_success_rate, roa, shortest_path_variability, risk, current_attack_value])
- 
+        # Pull cost metrics for time-series features
         cost_df = self.network.get_cost_metric_stats().get_record()
         if not cost_df.empty:
             last = cost_df.iloc[-1]
             total_downtime = last['downtime']
-            #total_latency = last['latency']
             total_agent_time = last['agent_time']
         else:
             total_downtime = total_agent_time = 0.0
 
-        time_series_array = np.array([mtd_freq, overall_mttc_avg, time_since_last_mtd, total_downtime, total_agent_time])
-        # print("State Array",state_array)
-        # print("Time Series Array", time_series_array)
-        return state_array, time_series_array
+        # Define the state filter
+        state_filter = {
+            "host_compromise_ratio": host_compromise_ratio,
+            "attack_path_exposure": attack_path_exposure,
+            "overall_asr_avg": attack_success_rate,
+            "roa": roa,
+            "risk": risk,
+        }
 
-
-    #def get_latency(self, mtd):
-    #    LATENCY_VALUES = {
-    #        "CompleteTopologyShuffle": 5350,  
-    #        "IPShuffle": 200,
-    #        "OSDiversity": 150,
-    #        "ServiceDiversity": 5000,
-    #    }
-    #    return LATENCY_VALUES.get(mtd,None)
+        # Define the time-series filter, now including cost metrics
+        time_series_filter = {
+            "mtd_freq": mtd_freq,
+            "overall_mttc_avg": mean_time_to_compromise,
+            "time_since_last_mtd": time_since_last_mtd,
+            "shortest_path_variability": shortest_path_variability,
+            "ip_variability": ip_variability,
+            "attack_type": current_attack_value,
+            "total_downtime": total_downtime,
+            "total_agent_time": total_agent_time,
+        }
     
+        # Filter by configured features
+        state_array = np.array([value if key in self.features["static"] else 0 for key, value in state_filter.items()])
+        time_series_array = np.array([value if key in self.features["time"] else 0 for key, value in time_series_filter.items()])
+       
+        return state_array, time_series_array
