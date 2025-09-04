@@ -6,6 +6,8 @@ from mtdnetwork.statistic.evaluation import Evaluation
 import numpy as np
 import random
 
+from mtdnetwork.util import realtime
+
 class MTDOperation:
 
     def __init__(self,security_metrics_record,env, end_event, network, attack_operation, scheme, adversary, proceed_time=0,
@@ -68,7 +70,7 @@ class MTDOperation:
             if self.network.is_compromised(compromised_hosts=self.attack_operation.get_adversary().get_compromised_hosts()):
                 if not self.end_event.triggered:  # Check if the event has not been triggered yet
                     self.end_event.succeed()
-
+            self.network.get_cost_metric_stats().add_mtd_opportunities()
 
             # register an MTD
             if not self.network.get_mtd_queue():
@@ -84,6 +86,7 @@ class MTDOperation:
 
             resource = self._get_mtd_resource(mtd)
             if len(resource.users) == 0:
+                self.network.get_cost_metric_stats().add_mtd_executions()
                 self.env.process(self._mtd_execute_action(env=self.env, mtd=mtd))
             else:
                 # suspend if suspended dict doesn't have the same MTD.
@@ -131,6 +134,7 @@ class MTDOperation:
                         logging.info('MTD: %s triggered %.1fs' % (mtd.get_name(), self.env.now + self._proceed_time))
                     resource = self._get_mtd_resource(mtd=mtd)
                     if len(resource.users) == 0:
+                        self.network.get-cost_metric_stats().add_mtd_executions()
                         # execute MTD
                         self.env.process(self._mtd_execute_action(env=self.env, mtd=mtd))
                     else:
@@ -164,12 +168,18 @@ class MTDOperation:
         if self.network.is_compromised(compromised_hosts=self.attack_operation.get_adversary().get_compromised_hosts()):
             return
 
+
+        downtime_start = realtime.now()
         # execute mtd
         mtd.mtd_operation(self.attack_operation.get_adversary())
-
+        downtime_duration = realtime.now() - downtime_start
+                                         
         finish_time = env.now + self._proceed_time
         duration = finish_time - start_time
-        
+
+        self.network.get_cost_metric_stats().add_downtime(downtime_duration)
+        self.network.get_cost_metric_stats().append(finish_time, self.network)
+                
         if self.logging:
             logging.info('MTD: %s finished in %.1fs at %.1fs.' % (mtd.get_name(), duration, finish_time))
 

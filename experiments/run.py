@@ -32,6 +32,7 @@ import keras
 from keras.src.legacy.saving import legacy_h5_format
 from mtdnetwork.statistic.security_metric_statistics import SecurityMetricStatistics
 import numpy as np
+from pathlib import Path
 # logging.basicConfig(format='%(message)s', level=logging.INFO)
 
 
@@ -51,15 +52,17 @@ mtd_strategies = [
 # time_features = ["mtd_freq", "overall_mttc_avg", "time_since_last_mtd"]
 # features = {"static": static_features, "time": time_features}
 
-def save_evaluation_result(file_name, evaluations):
-    print("in evaluation saver")
-    current_directory = os.getcwd()
-    print(f"Saving evaluation results to {current_directory + '/experimental_data/results/' + file_name + '.csv'}")
-    if not os.path.exists(current_directory + '/experimental_data/results/' + file_name + '.csv'):
-        pd.DataFrame(evaluations).to_csv('experimental_data/results/' + file_name + '.csv', index=False)
+def save_evaluation_result(file_name, evaluations, result_dir=None):
+    if result_dir is None:
+        result_dir = Path("experimental_data") / "default_results"
+
+    Path(result_dir).mkdir(parents=True, exist_ok=True)
+    csv_path = Path(result_dir) / f"{file_name}.csv"
+
+    if not csv_path.exists():
+        pd.DataFrame(evaluations).to_csv(csv_path, index=False)
     else:
-        pd.DataFrame(evaluations).to_csv('experimental_data/results/' + file_name + '.csv', mode='a', index=False,
-                                         header=False)
+        pd.DataFrame(evaluations).to_csv(csv_path, mode='a', index=False, header=False)
 
 
 def thread_function(start, end, result_queue, simulation_function, file_name=None, combination=None):
@@ -156,10 +159,12 @@ def construct_experiment_result(name, mtd_interval, item, network_size):
         'ROA': item['roa'],
         'risk': item['risk'],
         'shortest_path_variability': item['shortest_path_variability'],
-        'total_downtime': item['total_downtime'],
+        #'total_downtime': item['total_downtime'],
         #'total_latency': item['total_latency'],
-        'total_agent_time': item['total_agent_time'],
-        'total_mtd_actions': item['total_mtd_actions'],
+        #'total_agent_time': item['total_agent_time'],
+        'downtime_ratio': item['downtime_ratio'],
+        'agent_time_ratio': item['agent_time_ratio'],
+        'mtd_action_ratio': item['mtd_action_ratio'],
         # 'Compromised Num': evaluation.compromised_num()
     }
 
@@ -195,7 +200,7 @@ def single_mtd_simulation(file_name, mtd_strategies, checkpoint= 'None', mtd_int
         print(mtd_name)
     return evaluations
 
-def mtd_ai_simulation(file_name,  model_path, start_time, finish_time, total_nodes, new_network, mtd_interval = [100, 200], network_size = [25, 50, 75, 100], attacker_sensitivity=1):
+def mtd_ai_simulation(file_name,  model_path, start_time, finish_time, total_nodes, new_network, mtd_interval = [100, 200], network_size = [25, 50, 75, 100], attacker_sensitivity=1, result_dir = None):
     """
     Simulations for single ai mtd
     """
@@ -222,7 +227,7 @@ def mtd_ai_simulation(file_name,  model_path, start_time, finish_time, total_nod
         
                 evaluations.append(result)
 
-    save_evaluation_result(file_name, evaluations)
+    save_evaluation_result(file_name, evaluations, result_dir)
     return evaluations
 
 
@@ -383,7 +388,7 @@ def  execute_ai_training(features, start_time=0, finish_time=None, scheme='mtd_a
                        checkpoints=None, total_nodes=50, total_endpoints=5, total_subnets=8, total_layers=4,
                        target_layer=4, total_database=2, terminate_compromise_ratio=0.8, new_network=False,
                        state_size=3, action_size=5, time_series_size=5, gamma=0.95, epsilon=1.0, epsilon_min=0.01, epsilon_decay=0.995, batch_size=32, train_start=1000, episodes=1000,
-                       file_name=None):
+                       file_name=None, model_dir=None):
     """
     :param start_time: the time to start the simulation, need to load timestamp-based snapshots if set start_time > 0
     :param finish_time: the time to finish the simulation. Set to None will run the simulation until
@@ -419,7 +424,10 @@ def  execute_ai_training(features, start_time=0, finish_time=None, scheme='mtd_a
 
     memory = deque(maxlen=2000)
     security_metric_record = SecurityMetricStatistics()
-
+    if model_dir is None:
+        model_dir = Path("AI_model/NewModels")
+    Path(model_dir).mkdir(parents=True, exist_ok=True)
+    
     for episode in range(episodes):
         # initialise the simulation
         env = simpy.Environment()
@@ -461,7 +469,7 @@ def  execute_ai_training(features, start_time=0, finish_time=None, scheme='mtd_a
                                         mtd_trigger_interval=mtd_interval, custom_strategies=custom_strategies, adversary=adversary,
                                         main_network=main_network, target_network=target_network, memory=memory, 
                                         gamma=gamma, epsilon=epsilon, epsilon_min=epsilon_min, epsilon_decay=epsilon_decay, 
-                                        batch_size=batch_size, train_start=train_start)
+                                        batch_size=batch_size, train_start=train_start, file_name = file_name)
             mtd_operation.proceed_mtd()
             security_metric_record = mtd_operation.security_metric_record
         # save snapshot by time
@@ -481,8 +489,9 @@ def  execute_ai_training(features, start_time=0, finish_time=None, scheme='mtd_a
             epsilon *= epsilon_decay
         
         # print(f"Episode: {episode}, Epsilon: {epsilon}")
-    
-    main_network.save(f'AI_model/main_network_{file_name}.h5')
+
+    save_path = Path(model_dir) / f"{file_name}.h5"
+    main_network.save(save_path)
     print("Training completed and model saved.")
 
 # Define and register the custom mse function

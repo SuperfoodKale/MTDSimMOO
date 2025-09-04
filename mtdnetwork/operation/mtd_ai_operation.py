@@ -8,7 +8,7 @@ from mtdnetwork.mtdai.mtd_ai import choose_action
 import pandas as pd
 import random
 from mtdnetwork.statistic.security_metric_statistics import SecurityMetricStatistics
-
+from mtdnetwork.util import realtime
 
 class MTDAIOperation:
 
@@ -76,10 +76,13 @@ class MTDAIOperation:
                 if not self.end_event.triggered:  # Check if the event has not been triggered yet (will crash without this check)
                     self.end_event.succeed()
                 return
+
+            self.network.get_cost_metric_stats().add_mtd_opportunities()
             
             state, time_series = self.get_state_and_time_series()
             # self.network.get_security_metric_stats().append_security_metric_record(state, time_series, round(self.env.now, -2))
 
+            
             # if using the mtd_ai scheme
             if self._mtd_scheme._scheme == 'mtd_ai':
 
@@ -87,14 +90,10 @@ class MTDAIOperation:
                 if (self.env.now - self.network.get_last_mtd_triggered_time()) > 2000: # The number 100 is just a temperory threshold
                     action = 1
                 else:
-                    import time 
-                    start_time = time.perf_counter()
+                    start_time = realtime.now()
                     action = choose_action(state, time_series, self.main_network, 5, self.epsilon)
-                    finish_time = time.perf_counter()
-                    agent_time = finish_time - start_time
-                    for host in self.network.get_host_objects():
-                        host.add_agent_time(ms = agent_time)
-                
+                    duration = realtime.now() - start_time
+                    self.network._cost_metric_stats.add_agent_time(duration)
                 if self.logging:
                     logging.info('Static period: %s' % (self.env.now - self.network.get_last_mtd_triggered_time()))
 
@@ -107,6 +106,7 @@ class MTDAIOperation:
 
             if action > 0:
                 # register an MTD
+                self.network.get_cost_metric_stats().add_mtd_executions()
                 if not self.network.get_mtd_queue():
                     if self._mtd_scheme._scheme == 'mtd_ai':
                         self._mtd_scheme.register_mtd(mtd_action=action)
@@ -161,9 +161,12 @@ class MTDAIOperation:
         if self.network.is_compromised(compromised_hosts=self.attack_operation.get_adversary().get_compromised_hosts()):
             return
 
+        
+        downtime_start = realtime.now()
         # execute mtd
         mtd.mtd_operation(self.attack_operation.get_adversary())
-
+        downtime_duration = realtime.now() - downtime_start
+        self.network.get_cost_metric_stats().add_downtime(downtime_duration)
         
 
         finish_time = env.now + self._proceed_time
@@ -298,16 +301,16 @@ class MTDAIOperation:
 
         state_array = np.array([host_compromise_ratio, exposed_endpoints, attack_path_exposure, overall_asr_avg, roa, shortest_path_variability, risk, current_attack_value])
 
-        cost_df = self.network.get_cost_metric_stats().get_record()
+        cost_df = self.network.get_cost_metric_stats().get_record(self.env.now, self.network)
         if not cost_df.empty:
             last = cost_df.iloc[-1]
-            total_downtime = last['downtime']
-            #total_latency = last['latency']
-            total_agent_time = last['agent_time']
+            downtime_ratio = last['downtime_ratio']
+            agent_time_ratio = last['agent_time_ratio']
+            mtd_action_ratio = last['mtd_action_ratio']
         else:
-            total_downtime = total_agent_time = 0.0
+            downtime_ratio = agent_time_ratio = mtd_action_ratio = 0.0
 
-        time_series_array = np.array([mtd_freq, overall_mttc_avg, time_since_last_mtd, total_downtime, total_agent_time])
+        time_series_array = np.array([mtd_freq, overall_mttc_avg, time_since_last_mtd, downtime_ratio, agent_time_ratio, mtd_action_ratio])
 
         # self.security_metrics_record.append_security_metric_record(state_array,time_series_array, env.now)
  

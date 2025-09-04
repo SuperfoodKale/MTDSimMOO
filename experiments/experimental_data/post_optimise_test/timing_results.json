@@ -1,0 +1,7 @@
+{
+  "model_name": "BATCH_SIZE_32_EPSILON_1_EPSILON_DECAY_0.995_EPSILON_MIN_0.01_GAMMA_0.95_TRAIN_START_2000",
+  "training_time_seconds": 1239.408720254898,
+  "evaluation_time_seconds": 369.64646434783936,
+  "total_time_seconds": 1609.1054866313934,
+  "test_type": "post_optimize"
+}

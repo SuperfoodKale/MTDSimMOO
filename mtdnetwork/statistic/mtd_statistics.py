@@ -8,10 +8,11 @@ class MTDStatistics:
         self._total_suspended = 0
         self._total_triggered = 0
         self._total_executed = 0
+        self._total_opportunities = 0
         self._total_attack_interrupted = 0
         self._switch_mtd_interval_at = {}
         self._switch_mtd_strategy_at = {}
-
+    
     def append_mtd_operation_record(self, mtd_strategy, start_time, finish_time, duration):
         self._mtd_operation_record.append({
             'name': mtd_strategy.get_name(),
@@ -33,6 +34,7 @@ class MTDStatistics:
             'Total suspended MTD': self._total_suspended,
             'Total executed MTD': self._total_executed,
             'Total attack interrupted': self._total_attack_interrupted,
+            'Total opportunities': self._total_opportunities,
             'Switch MTD interval at': self._switch_mtd_interval_at,
             'Switch MTD strategy at': self._switch_mtd_strategy_at
         }
@@ -58,3 +60,9 @@ class MTDStatistics:
 
     def get_total_attack_interrupted(self):
         return self._total_attack_interrupted
+
+    def add_total_opportunity(self):
+        self._total_opportunities += 1
+
+    def get_total_opportunities(self):
+        return self._total_opportunities 

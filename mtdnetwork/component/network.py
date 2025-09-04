@@ -79,6 +79,10 @@ class Network:
         self.target_node = None
         self.target_layer = target_layer
 
+        self._visible_graph_cache = None
+        self._last_reachable_hash = None
+
+
 
     def init_network(self):
         self.assign_tags()
@@ -469,64 +473,46 @@ class Network:
         NOTE: Probably can be optimised for speed
         """
         self.reachable = self.exposed_endpoints.copy()
-        compromised_neighbour_nodes = []
-
-        # Appends all neighbouring hosts from endpoints
+        compromised_set = set(self.compromised_hosts)
+        reachable_set = set(self.reachable)
+        
+        to_process = []
         for endpoint in self.exposed_endpoints:
-            visible_hosts = list(self.graph.neighbors(endpoint))
-            for host in visible_hosts:
-                for c_host in self.compromised_hosts:
-                    if host == c_host:
-                        compromised_neighbour_nodes.append(host)
-                        self.reachable.append(host)
+            for neighbor in self.graph.neighbors(endpoint):
+                if neighbor in compromised_set and neighbor not in reachable_set:
+                    to_process.append(neighbor)
+                    self.reachable.append(neighbor)
+                    reachable_set.add(neighbor)
 
-        # Checks if neighbouring hosts of compromised node are also compromised, if so add them to the list
-        while len(compromised_neighbour_nodes) != 0:
-            appended_host = compromised_neighbour_nodes.pop(0)
-            visible_hosts = list(self.graph.neighbors(appended_host))
-            for host in visible_hosts:
-                for c_host in self.compromised_hosts:
-                    if host == c_host:
-                        if host not in self.reachable:
-                            compromised_neighbour_nodes.append(host)
-                            self.reachable.append(host)
-                        # repeated = False
-                        # for reachable in self.reachable:
-                        #     if reachable == host:
-                        #         repeated = True
-                        # if repeated == False:
-                        #     compromised_neighbour_nodes.append(host)
-                        #     self.reachable.append(host)
+        while to_process:
+            current_host = to_process.pop(0)
+            for neighbor in self.graph.neighbors(current_host):
+                if neighbor in compromised_set and neighbor not in reachable_set:
+                    to_process.append(neighbor)
+                    self.reachable.append(neighbor)
+                    reachable_set.add(neighbor)
+        
+        self._last_reachable_hash = None
 
     def update_reachable_compromise(self, compromised_node_id, compromised_hosts):
         """
         Updates the Reachable with the node_id of the compromised node
         """
         self.reachable.append(compromised_node_id)
-        appended_host = compromised_node_id
         self.compromised_hosts = compromised_hosts
-        all_reachable_hosts_added = False
-        compromised_neighbour_nodes = []
+        to_process = [compromised_node_id]
+        reachable_set = set(self.reachable)
+        compromised_set = set(compromised_hosts)
+        
+        while to_process:
+            current_host = to_process.pop(0)
+            for neighbor in self.graph.neighbors(current_host):
+                if neighbor in compromised_set and neighbor not in reachable_set:
+                    to_process.append(neighbor)
+                    self.reachable.append(neighbor)
+                    reachable_set.add(neighbor)
 
-        # Checks if neighbouring hosts of compromised node are also compromised, if so add them to the list
-        while all_reachable_hosts_added == False:
-            visible_hosts = list(self.graph.neighbors(appended_host))
-            for host in visible_hosts:
-                for c_host in compromised_hosts:
-                    if host == c_host:
-                        # repeated = False
-                        # for reachable in self.reachable:
-                        #     if reachable == host:
-                        #         repeated = True
-                        # if repeated == False:
-                        if host not in self.reachable:
-                            compromised_neighbour_nodes.append(host)
-                            self.reachable.append(host)
-
-            if len(compromised_neighbour_nodes) == 0:
-                all_reachable_hosts_added = True
-            else:
-                appended_host = compromised_neighbour_nodes.pop(0)
+        self._last_reachable_hash = None
 
     def get_host_id_priority(self, host_id):
         """
@@ -711,16 +697,20 @@ class Network:
         Returns the Network graph that is visible to the hacker depending on the hosts that have already been compromised
 
         """
-        visible_hosts = []
+        current_hash = hash(tuple(sorted(self.reachable)))
+    
+        if self._last_reachable_hash == current_hash and self._visible_graph_cache:
+            return self._visible_graph_cache
+        
+        # Recalculate only when reachable hosts change
+        visible_hosts = set(self.reachable + self.exposed_endpoints)
         for c_host in self.reachable:
-            visible_hosts = visible_hosts + list(self.graph.neighbors(c_host))
-
-        visible_hosts = visible_hosts + self.reachable
-        visible_hosts = visible_hosts + self.exposed_endpoints
-
-        return self.graph.subgraph(
-            list(set(visible_hosts))
-        )
+            visible_hosts.update(self.graph.neighbors(c_host))
+        
+        self._visible_graph_cache = self.graph.subgraph(visible_hosts)
+        self._last_reachable_hash = current_hash
+        
+        return self._visible_graph_cache
 
     def get_host(self, host_id):
         """

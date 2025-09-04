@@ -122,6 +122,15 @@ class Evaluation:
             total_asr, total_time_to_compromise, total_compromises = 0, 0, 0
 
             #M1T1
+            
+            cost_df = self.cost_metrics_record.get_record()
+            if not cost_df.empty:
+                last = cost_df.iloc[-1]
+                downtime_scaled = last["downtime_ratio"]
+                agent_time_scaled = last["agent_time_ratio"]
+                mtd_action_scaled = last["mtd_action_ratio"]
+            else:
+                downtime_scaled = agent_time_scaled = mtd_action_scaled = 0.0
             result.append({'time_to_compromise': time_to_compromise,
                            'attack_success_rate': attack_success_rate,
                            'host_compromise_ratio': comp_ratio,
@@ -131,10 +140,13 @@ class Evaluation:
                            "roa": state_array[4],
                            "shortest_path_variability": state_array[5],
                            "risk": state_array[6],
-                           "total_downtime": self.total_downtime(),
+                           #"total_downtime": self.total_downtime(),
                            #"total_latency": self.total_latency(),
-                           "total_agent_time": self.total_agent_time(),
-                           "total_mtd_actions": self.total_mtd_actions(),
+                           #"total_agent_time": self.total_agent_time(),
+                           "downtime_ratio": downtime_scaled,
+                           "agent_time_ratio": agent_time_scaled,
+                           "mtd_action_ratio": mtd_action_scaled,
+                           #"total_mtd_actions": self.total_mtd_actions(),
                            })
 
     

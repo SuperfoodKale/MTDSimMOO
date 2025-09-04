@@ -9,11 +9,19 @@ import pandas as pd
 import random
 from mtdnetwork.component.host import Host
 
+from mtdnetwork.mtd.completetopologyshuffle import CompleteTopologyShuffle
+from mtdnetwork.mtd.ipshuffle import IPShuffle
+from mtdnetwork.mtd.osdiversity import OSDiversity
+from mtdnetwork.mtd.servicediversity import ServiceDiversity
+
+from mtdnetwork.util import realtime
+import time
+
 class MTDAITraining:
 
     def __init__(self,security_metric_record, features,env, end_event, network, attack_operation, scheme, adversary, proceed_time=0,
                  mtd_trigger_interval=None, custom_strategies=None, main_network=None, target_network=None, memory=None,
-                 gamma=None, epsilon=None, epsilon_min=None, epsilon_decay=None, train_start=None, batch_size=None, attacker_sensitivity = 1, static_degrade_factor = 2000):
+                 gamma=None, epsilon=None, epsilon_min=None, epsilon_decay=None, train_start=None, batch_size=None, attacker_sensitivity = 1, static_degrade_factor = 2000, output_throttle=float('inf'), file_name = None):
         """
         :param env: the parameter to facilitate simPY env framework
         :param network: the simulation network
@@ -34,6 +42,13 @@ class MTDAITraining:
         self._mtd_scheme = MTDScheme(network=network, scheme=scheme, mtd_trigger_interval=mtd_trigger_interval,
                                      custom_strategies=custom_strategies)
         self.custom_strategies = custom_strategies
+        if custom_strategies is None:
+            self.custom_strategies = [
+            CompleteTopologyShuffle(network=self.network),
+            IPShuffle(network=self.network),
+            OSDiversity(network=self.network),
+            ServiceDiversity(network=self.network)
+        ]
      
         self._proceed_time = proceed_time
 
@@ -56,12 +71,32 @@ class MTDAITraining:
         self.static_degrade_factor = static_degrade_factor
         self.attack_dict = {"SCAN_HOST": 1, "ENUM_HOST": 2, "SCAN_PORT": 3, "EXPLOIT_VULN": 4, "SCAN_NEIGHBOR": 5, "BRUTE_FORCE": 6}
 
+        self.output_throttle = output_throttle  # Display output every N training steps
+        self.training_step_count = 0
+
+        self.file_name = file_name
+        
         self.evaluation = Evaluation(
             network=self.network,
             adversary=self.adversary,
             security_metrics_record=self.security_metric_record,
             cost_metrics_record=self.network.get_cost_metric_stats()
         )
+
+        if batch_size:
+            state_size = len(features.get('static', []))
+            time_series_size = len(features.get('time', []))
+        
+            self.pre_allocated_arrays = (
+                np.empty((batch_size, state_size), dtype=np.float32),          # states
+                np.empty((batch_size, time_series_size, 1), dtype=np.float32), # time_series
+                np.empty(batch_size, dtype=np.int32),                          # actions
+                np.empty(batch_size, dtype=np.float32),                        # rewards
+                np.empty((batch_size, state_size), dtype=np.float32),          # next_states
+                np.empty((batch_size, time_series_size, 1), dtype=np.float32), # next_time_series
+                np.empty(batch_size, dtype=bool)                               # dones
+            )
+
 
     def proceed_mtd(self):
         if self.network.get_unfinished_mtd():
@@ -82,31 +117,39 @@ class MTDAITraining:
                 if not self.end_event.triggered:  # Check if the event has not been triggered yet (will crash without this check)
                     self.end_event.succeed()
                 return
-
+            
+            self.network.get_mtd_stats().add_total_opportunity()
+            
             state, time_series = self.get_state_and_time_series()
+            start_time = realtime.now()
             action = choose_action(state, time_series, self.main_network, 5, self.epsilon)
+            duration = realtime.now() - start_time
+            self.network._cost_metric_stats.add_agent_time(duration)
 
             # Static network degradation factor (legacy 2000 guard): account for agent_time while we keep exploring
             while (self.env.now - self.network.get_last_mtd_triggered_time()) > 2000 and action == 0:
-                import time
-                start_time = time.perf_counter()
-                action =  choose_action(state, time_series, self.main_network, 5, self.epsilon)
-                finish_time = time.perf_counter()
-                agent_time = finish_time - start_time
-                for host in self.network.get_host_objects():
-                    host.add_agent_time(ms=agent_time)
-
+                start_time = realtime.now()
+                action = choose_action(state, time_series, self.main_network, 5, self.epsilon)
+                duration = realtime.now() - start_time
+                self.network._cost_metric_stats.add_agent_time(duration)
             # Static network degradation factor (if exceed static factor force to deploy MTD)
             if (self.env.now - self.network.get_last_mtd_triggered_time()) > self.static_degrade_factor: 
+                start_time = realtime.now()
                 action = random.randint(1, len(self.custom_strategies) + 1)
+                duration = realtime.now() - start_time
+                self.network._cost_metric_stats.add_agent_time(duration)
             else: 
+                start_time = realtime.now()
                 action = choose_action(state, time_series, self.main_network, len(self.custom_strategies) + 1, self.epsilon)
+                duration = realtime.now() - start_time
+                self.network._cost_metric_stats.add_agent_time(duration)
                 
 
             if action > 0 or self.network.get_last_mtd_triggered_time() == 0:
                 self.network.set_last_mtd_triggered_time(self.env.now)
 
             if action > 0:
+                self.network.get_cost_metric_stats().add_mtd_executions()
                 # register an MTD
                 if not self.network.get_mtd_queue():
                     self._mtd_scheme.register_mtd(mtd_action=action)
@@ -158,8 +201,12 @@ class MTDAITraining:
         if self.network.is_compromised(compromised_hosts=self.attack_operation.get_adversary().get_compromised_hosts()):
             return
 
+        
+        downtime_start = realtime.now()
         # execute mtd
         mtd.mtd_operation(self.attack_operation.get_adversary())
+        downtime_duration = realtime.now() - downtime_start
+        self.network.get_cost_metric_stats().add_downtime(downtime_duration)
 
         finish_time = env.now + self._proceed_time
         duration = finish_time - start_time
@@ -182,13 +229,15 @@ class MTDAITraining:
         self.network.get_mtd_stats().append_mtd_operation_record(mtd, start_time, finish_time, duration)
         # interrupt adversary
         self._interrupt_adversary(env, mtd)
-
+        
         # update reinforcement learning model
         new_state, new_time_series = self.get_state_and_time_series()
         reward = calculate_reward(state, time_series, new_state, new_time_series, self.features['static'], self.features['time'], self.memory)
         done = False
         self.memory.append((state, time_series, action, reward, new_state, new_time_series, done))
-        replay(self.memory, self.main_network, self.target_network, self.batch_size, self.gamma, self.epsilon, self.epsilon_min, self.epsilon_decay, self.train_start)
+        replay(self.memory, self.main_network, self.target_network, self.batch_size, self.gamma, self.epsilon, self.epsilon_min, self.epsilon_decay, self.train_start, self.pre_allocated_arrays)
+
+        self.training_step_count += 1
 
         # Update time since last MTD operation
         self.network.last_mtd_triggered_time = self.env.now
@@ -332,13 +381,14 @@ class MTDAITraining:
             current_attack_value = self.attack_dict.get(current_attack, 7)
 
         # Pull cost metrics for time-series features
-        cost_df = self.network.get_cost_metric_stats().get_record()
+        cost_df = self.network.get_cost_metric_stats().get_record(self.env.now, self.network)
         if not cost_df.empty:
             last = cost_df.iloc[-1]
-            total_downtime = last['downtime']
-            total_agent_time = last['agent_time']
+            downtime_ratio = last['downtime_ratio']
+            agent_time_ratio = last['agent_time_ratio']
+            mtd_action_ratio = last['mtd_action_ratio']
         else:
-            total_downtime = total_agent_time = 0.0
+            downtime_ratio = agent_time_ratio = mtd_action_ratio = 0.0
 
         # Define the state filter
         state_filter = {
@@ -349,7 +399,7 @@ class MTDAITraining:
             "risk": risk,
         }
 
-        # Define the time-series filter, now including cost metrics
+        # Define the time-series filter
         time_series_filter = {
             "mtd_freq": mtd_freq,
             "overall_mttc_avg": mean_time_to_compromise,
@@ -357,8 +407,9 @@ class MTDAITraining:
             "shortest_path_variability": shortest_path_variability,
             "ip_variability": ip_variability,
             "attack_type": current_attack_value,
-            "total_downtime": total_downtime,
-            "total_agent_time": total_agent_time,
+            "downtime_ratio": downtime_ratio,
+            "agent_time_ratio": agent_time_ratio,
+            "mtd_action_ratio": mtd_action_ratio,
         }
     
         # Filter by configured features

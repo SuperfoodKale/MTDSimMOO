@@ -1,8 +1,8 @@
 import tensorflow as tf
-from tensorflow.keras.layers import Input, Dense, LSTM, Concatenate, ReLU, BatchNormalization, Dropout, Add
+from tensorflow.keras.layers import Input, Dense, LSTM, GRU, Concatenate, ReLU, BatchNormalization, Dropout, Add
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.losses import MeanSquaredError
+from tensorflow.keras.losses import MeanSquaredError, Huber
 import numpy as np
 import random
 from collections import deque
@@ -54,7 +54,7 @@ def choose_action(state, time_series, main_network, action_size, epsilon):
 
     if np.random.rand() <= epsilon:
         return random.randrange(action_size)
-    act_values = main_network.predict([state, time_series])
+    act_values = main_network.predict([state, time_series], verbose=0)
     return np.argmax(act_values[0])
 
 # Learning function
@@ -64,31 +64,52 @@ def soft_update_target_model(target_network, main_network, tau=0.1):
     target_network.set_weights(tau * main_weights + (1 - tau) * target_weights)
 
 # Double Q-learning
-def replay(memory, main_network, target_network, batch_size, gamma, epsilon, epsilon_min, epsilon_decay, train_start):
+def replay(memory, main_network, target_network, batch_size, gamma, epsilon, epsilon_min, epsilon_decay, train_start, pre_allocated_arrays=None):
     if len(memory) < train_start:
         return
+    
     minibatch = random.sample(memory, batch_size)
-    for state, time_series, action, reward, next_state, next_time_series, done in minibatch:
-        state = state.reshape((1,-1))
-        time_series = time_series.reshape((1,-1))
-        next_state = next_state.reshape((1,-1))
-        next_time_series = next_time_series.reshape((1,-1))
-
-        target = main_network.predict([state, time_series])
-
-
-        if done:
-            target[0][action] = reward
-        else:
-            t_next_action = np.argmax(main_network.predict([next_state, next_time_series])[0])
-            t_next_q = target_network.predict([next_state, next_time_series])[0][t_next_action]
-            target[0][action] = reward + gamma * t_next_q
-
-        main_network.fit([state, time_series], target, epochs=1, verbose=0)
-
+    
+    # Use pre-allocated arrays if provided to avoid memory allocation overhead
+    if pre_allocated_arrays:
+        states, time_series, actions, rewards, next_states, next_time_series, dones = pre_allocated_arrays
+    else:
+        # Fallback to standard allocation if no pre-allocated arrays provided
+        states = np.empty((batch_size, minibatch[0][0].shape[0]), dtype=np.float32)
+        time_series = np.empty((batch_size, minibatch[0][1].shape[0], 1), dtype=np.float32)
+        actions = np.empty(batch_size, dtype=np.int32)
+        rewards = np.empty(batch_size, dtype=np.float32)
+        next_states = np.empty((batch_size, minibatch[0][4].shape[0]), dtype=np.float32)
+        next_time_series = np.empty((batch_size, minibatch[0][5].shape[0], 1), dtype=np.float32)
+        dones = np.empty(batch_size, dtype=bool)
+    
+    for i, (s, ts, a, r, ns, nts, d) in enumerate(minibatch):
+        states[i] = s
+        time_series[i] = ts.reshape(-1, 1)
+        actions[i] = a
+        rewards[i] = r
+        next_states[i] = ns
+        next_time_series[i] = nts.reshape(-1, 1)
+        dones[i] = d
+    
+    # Batch predictions 
+    current_q_values = main_network([states, time_series], training=False)
+    next_q_values = target_network([next_states, next_time_series], training=False)
+    
+    # Vectorized target computation 
+    targets = current_q_values.numpy().copy()
+    max_next_q = np.max(next_q_values.numpy(), axis=1)
+    targets[np.arange(batch_size), actions] = np.where(
+        dones,
+        rewards,
+        rewards + gamma * max_next_q
+    )
+    
+    # Single batch update 
+    main_network.fit([states, time_series], targets, epochs=1, verbose=0)
+    
     if epsilon > epsilon_min:
         epsilon *= epsilon_decay
-
 
 
 
@@ -152,9 +173,9 @@ def calculate_reward(current_state, current_time_series, next_state, next_time_s
         "time_since_last_mtd": -75 * context_multiplier,
 
         #cost
-        "total_downtime": -10 * context_multiplier,
-        #"total_latency": -10 * context_multiplier,
-        "total_agent_time": -10 * context_multiplier,
+        "downtime_ratio": -10 * context_multiplier,
+        "agent_time_ratio": -10 * context_multiplier,
+        "mtd_action_ratio": -10 * context_multiplier,
     }
 
     # Calculate reward using normalized or raw values
